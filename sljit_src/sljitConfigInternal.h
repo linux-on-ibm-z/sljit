@@ -86,6 +86,7 @@
 	|| (defined SLJIT_CONFIG_MIPS_64 && SLJIT_CONFIG_MIPS_64) \
 	|| (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32) \
 	|| (defined SLJIT_CONFIG_TILEGX && SLJIT_CONFIG_TILEGX) \
+	|| (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X) \
 	|| (defined SLJIT_CONFIG_AUTO && SLJIT_CONFIG_AUTO) \
 	|| (defined SLJIT_CONFIG_UNSUPPORTED && SLJIT_CONFIG_UNSUPPORTED))
 #error "An architecture must be selected"
@@ -103,6 +104,7 @@
 	+ (defined SLJIT_CONFIG_MIPS_32 && SLJIT_CONFIG_MIPS_32) \
 	+ (defined SLJIT_CONFIG_MIPS_64 && SLJIT_CONFIG_MIPS_64) \
 	+ (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32) \
+	+ (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X) \
 	+ (defined SLJIT_CONFIG_AUTO && SLJIT_CONFIG_AUTO) \
 	+ (defined SLJIT_CONFIG_UNSUPPORTED && SLJIT_CONFIG_UNSUPPORTED) >= 2
 #error "Multiple architectures are selected"
@@ -142,6 +144,8 @@
 #define SLJIT_CONFIG_SPARC_32 1
 #elif defined(__tilegx__)
 #define SLJIT_CONFIG_TILEGX 1
+#elif defined(__s390x__)
+#define SLJIT_CONFIG_S390X 1
 #else
 /* Unsupported architecture */
 #define SLJIT_CONFIG_UNSUPPORTED 1
@@ -373,7 +377,8 @@ typedef long int sljit_sw;
 	&& !(defined SLJIT_CONFIG_ARM_64 && SLJIT_CONFIG_ARM_64) \
 	&& !(defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) \
 	&& !(defined SLJIT_CONFIG_MIPS_64 && SLJIT_CONFIG_MIPS_64) \
-	&& !(defined SLJIT_CONFIG_TILEGX && SLJIT_CONFIG_TILEGX)
+	&& !(defined SLJIT_CONFIG_TILEGX && SLJIT_CONFIG_TILEGX) \
+	&& !(defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
 #define SLJIT_32BIT_ARCHITECTURE 1
 #define SLJIT_WORD_SHIFT 2
 typedef unsigned int sljit_uw;
@@ -447,7 +452,8 @@ typedef double sljit_f64;
 #define SLJIT_BIG_ENDIAN 1
 #endif
 
-#elif (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32)
+#elif (defined SLJIT_CONFIG_SPARC_32 && SLJIT_CONFIG_SPARC_32) \
+	|| (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
 
 #define SLJIT_BIG_ENDIAN 1
 
@@ -474,7 +480,8 @@ typedef double sljit_f64;
 	|| (defined SLJIT_CONFIG_ARM_THUMB2 && SLJIT_CONFIG_ARM_THUMB2) \
 	|| (defined SLJIT_CONFIG_ARM_64 && SLJIT_CONFIG_ARM_64) \
 	|| (defined SLJIT_CONFIG_PPC_32 && SLJIT_CONFIG_PPC_32) \
-	|| (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64)
+	|| (defined SLJIT_CONFIG_PPC_64 && SLJIT_CONFIG_PPC_64) \
+	|| (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
 #define SLJIT_UNALIGNED 1
 #endif
 
@@ -647,6 +654,12 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_sw sljit_exec_offset(void* ptr);
 #define SLJIT_NUMBER_OF_REGISTERS 10
 #define SLJIT_NUMBER_OF_SAVED_REGISTERS 5
 #define SLJIT_LOCALS_OFFSET_BASE 0
+
+#elif (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
+
+#define SLJIT_NUMBER_OF_REGISTERS 12
+#define SLJIT_NUMBER_OF_SAVED_REGISTERS 8
+#define SLJIT_LOCALS_OFFSET_BASE 160
 
 #elif (defined SLJIT_CONFIG_UNSUPPORTED && SLJIT_CONFIG_UNSUPPORTED)
 
