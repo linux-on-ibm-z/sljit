@@ -29,41 +29,242 @@ SLJIT_API_FUNC_ATTRIBUTE const char* sljit_get_platform_name(void)
 	return "s390x" SLJIT_CPUINFO;
 }
 
-typedef sljit_uw sljit_ins;
+typedef sljit_uw sljit_ins; // instruction
+typedef sljit_uw sljit_gpr; // general purpose register [0-15]
+typedef sljit_uw sljit_fpr; // floating-point register [0-15]
+
+// general purpose registers
+const sljit_gpr r0 = 0; // 0 in address calculations
+const sljit_gpr r1 = 1;
+const sljit_gpr r2 = 2; // 1st argument
+const sljit_gpr r3 = 3; // 2nd argument
+const sljit_gpr r4 = 4; // 3rd argument
+const sljit_gpr r5 = 5; // 4th argument
+const sljit_gpr r6 = 6; // 5th argument; 1st saved register
+const sljit_gpr r7 = 7;
+const sljit_gpr r8 = 8;
+const sljit_gpr r9 = 9;
+const sljit_gpr r10 = 10;
+const sljit_gpr r11 = 11;
+const sljit_gpr r12 = 12;
+const sljit_gpr r13 = 13;
+const sljit_gpr r14 = 14; // return address
+const sljit_gpr r15 = 15; // stack pointer
 
 static sljit_uw sizeof_ins(sljit_ins ins)
 {
-	return ins >> 48;
+	if ((ins&0x00000000ffff) == ins) return 2;
+	if ((ins&0x0000ffffffff) == ins) return 4;
+	if ((ins&0xffffffffffff) == ins) return 6;
+	abort();
 }
 
-static sljit_uw push_ins(void *buf, sljit_ins ins)
+static sljit_s32 push_inst(struct sljit_compiler *compiler, sljit_ins ins)
 {
-	sljit_uw size = sizeof_ins(ins);
-	sljit_u8 *ibuf = (sljit_u8*) buf;
-	switch (size) {
-	case 6:
-		ibuf[0] = (sljit_u8) ins >> 40;
-		ibuf[1] = (sljit_u8) ins >> 32;
-		ibuf += 2;
-		/* fallthrough */
-	case 4:
-		ibuf[0] = (sljit_u8) ins >> 24;
-		ibuf[1] = (sljit_u8) ins >> 16;
-		ibuf += 2;
-		/* fallthrough */
-	case 2:
-		ibuf[0] = (sljit_u8) ins >> 8;
-		ibuf[1] = (sljit_u8) ins;
-		break;
-	default:
-		abort();
-	}
-	return size;
+	sljit_ins *ibuf = (sljit_ins *)ensure_buf(compiler, sizeof(sljit_ins));
+	FAIL_IF(!ibuf);
+	return SLJIT_SUCCESS;
 }
+
+static sljit_s32 encode_inst(void **ptr, sljit_ins ins)
+{
+	sljit_u16 *ibuf = (sljit_u16 *)*ptr;
+	sljit_uw size = sizeof_ins(ins);
+	SLJIT_ASSERT(size&6 == size);
+	switch (size) {
+	case 6: *ibuf++ = (sljit_u16)(ins >> 32);
+	case 4: *ibuf++ = (sljit_u16)(ins >> 16);
+	case 2: *ibuf++ = (sljit_u16)(ins);
+	}
+	*ptr = (void*)ibuf;
+	return SLJIT_SUCCESS;
+}
+
+#define SLJIT_S390X_INSTRUCTION(op, ...) \
+static sljit_ins op(__VA_ARGS__)
+
+static sljit_uw disp_s20(sljit_s32 d)
+{
+	if (d >> 20 != 0 && d >> 20 != -1) {
+		abort(); // out of range
+	}
+	sljit_uw dh = (d >> 12) & 0xff;
+	sljit_uw dl = (d << 8) & 0xfff00;
+	return dh | dl;
+}
+
+SLJIT_S390X_INSTRUCTION(lgr, sljit_gpr dst, sljit_gpr src)
+{
+	return 0xb9040000 | dst << 4 | src;
+}
+
+SLJIT_S390X_INSTRUCTION(lghi, sljit_gpr dst, sljit_s16 imm)
+{
+	return 0xa7090000 | dst << 20 | (imm&0xffff);
+}
+
+SLJIT_S390X_INSTRUCTION(aghi, sljit_gpr dst, sljit_s16 imm)
+{
+	return 0xa70b0000 | dst << 20 | (imm&0xffff);
+}
+
+SLJIT_S390X_INSTRUCTION(stmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
+{
+	return 0xeb0000000024 | start << 36 | end << 32 | b << 28 | disp_s20(d) << 8;
+}
+
+SLJIT_S390X_INSTRUCTION(lmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
+{
+	return 0xeb0000000004 | start << 36 | end << 32 | b << 28 | disp_s20(d) << 8;
+}
+
+SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
+{
+	return 0x07f0 | target;
+}
+
+#undef SLJIT_S390X_INSTRUCTION
 
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
 {
-	abort();
+	CHECK_ERROR_PTR();
+	CHECK_PTR(check_sljit_generate_code(compiler));
+
+	// calculate the size of the code
+	sljit_uw ins_size = 0;
+	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
+		sljit_uw len = buf->used_size / sizeof(sljit_ins);
+		sljit_ins *ibuf = (sljit_ins *)buf->memory;
+		for (sljit_uw i = 0; i < len; ++i) {
+			// TODO(mundaym): labels, jumps, constants...
+			ins_size += sizeof_ins(ibuf[i]);
+		}
+	}
+
+	// allocate target buffer
+	void *code = SLJIT_MALLOC_EXEC(ins_size);
+	PTR_FAIL_WITH_EXEC_IF(code);
+	void *code_ptr = code;
+
+	// emit the code
+	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
+		sljit_uw len = buf->used_size / sizeof(sljit_ins);
+		sljit_ins *ibuf = (sljit_ins *)buf->memory;
+		for (sljit_uw i = 0; i < len; ++i) {
+			// TODO(mundaym): labels, jumps, constants...
+			encode_inst(&code_ptr, ibuf[i]);
+		}
+	}
+	SLJIT_ASSERT(code + ins_size == code_ptr);
+
+	compiler->error = SLJIT_ERR_COMPILED;
+	compiler->executable_offset = SLJIT_EXEC_OFFSET(code);
+	compiler->executable_size = ins_size;
+
+	code = SLJIT_ADD_EXEC_OFFSET(code, executable_offset);
+	code_ptr = SLJIT_ADD_EXEC_OFFSET(code_ptr, executable_offset);
+	SLJIT_CACHE_FLUSH(code, code_ptr);
+#if 0
+	reverse_buf(compiler);
+
+	code = (sljit_ins*)SLJIT_MALLOC_EXEC(compiler->size * sizeof(sljit_ins));
+	PTR_FAIL_WITH_EXEC_IF(code);
+	buf = compiler->buf;
+
+	code_ptr = code;
+	word_count = 0;
+	executable_offset = SLJIT_EXEC_OFFSET(code);
+
+	label = compiler->labels;
+	jump = compiler->jumps;
+	const_ = compiler->consts;
+
+	do {
+		buf_ptr = (sljit_ins*)buf->memory;
+		buf_end = buf_ptr + (buf->used_size >> 2);
+		do {
+			*code_ptr = *buf_ptr++;
+			/* These structures are ordered by their address. */
+			SLJIT_ASSERT(!label || label->size >= word_count);
+			SLJIT_ASSERT(!jump || jump->addr >= word_count);
+			SLJIT_ASSERT(!const_ || const_->addr >= word_count);
+			if (label && label->size == word_count) {
+				label->addr = (sljit_uw)SLJIT_ADD_EXEC_OFFSET(code_ptr, executable_offset);
+	SLJIT_CACHE_FLUSH(code, code_ptr)
+				label->size = code_ptr - code;
+				label = label->next;
+			}
+			if (jump && jump->addr == word_count) {
+					jump->addr = (sljit_uw)(code_ptr - 4);
+					code_ptr -= detect_jump_type(jump, code_ptr, code, executable_offset);
+					jump = jump->next;
+			}
+			if (const_ && const_->addr == word_count) {
+				const_->addr = (sljit_uw)code_ptr;
+				const_ = const_->next;
+			}
+			code_ptr ++;
+			word_count ++;
+		} while (buf_ptr < buf_end);
+
+		buf = buf->next;
+	} while (buf);
+
+	if (label && label->size == word_count) {
+		label->addr = (sljit_uw)SLJIT_ADD_EXEC_OFFSET(code_ptr, executable_offset);
+		label->size = code_ptr - code;
+		label = label->next;
+	}
+
+	SLJIT_ASSERT(!label);
+	SLJIT_ASSERT(!jump);
+	SLJIT_ASSERT(!const_);
+	SLJIT_ASSERT(code_ptr - code <= (sljit_sw)compiler->size);
+
+	jump = compiler->jumps;
+	while (jump) {
+		do {
+			addr = (jump->flags & JUMP_LABEL) ? jump->u.label->addr : jump->u.target;
+			buf_ptr = (sljit_ins *)jump->addr;
+
+			if (jump->flags & PATCH_B) {
+				addr = (sljit_sw)(addr - (sljit_uw)SLJIT_ADD_EXEC_OFFSET(buf_ptr, executable_offset)) >> 2;
+				SLJIT_ASSERT((sljit_sw)addr <= 0x1ffffff && (sljit_sw)addr >= -0x2000000);
+				buf_ptr[0] = ((jump->flags & IS_BL) ? BL : B) | (addr & 0x3ffffff);
+				if (jump->flags & IS_COND)
+					buf_ptr[-1] -= (4 << 5);
+				break;
+			}
+			if (jump->flags & PATCH_COND) {
+				addr = (sljit_sw)(addr - (sljit_uw)SLJIT_ADD_EXEC_OFFSET(buf_ptr, executable_offset)) >> 2;
+				SLJIT_ASSERT((sljit_sw)addr <= 0x3ffff && (sljit_sw)addr >= -0x40000);
+				buf_ptr[0] = (buf_ptr[0] & ~0xffffe0) | ((addr & 0x7ffff) << 5);
+				break;
+			}
+
+			SLJIT_ASSERT((jump->flags & (PATCH_ABS48 | PATCH_ABS64)) || addr <= 0xffffffffl);
+			SLJIT_ASSERT((jump->flags & PATCH_ABS64) || addr <= 0xffffffffffffl);
+
+			dst = buf_ptr[0] & 0x1f;
+			buf_ptr[0] = MOVZ | dst | ((addr & 0xffff) << 5);
+			buf_ptr[1] = MOVK | dst | (((addr >> 16) & 0xffff) << 5) | (1 << 21);
+			if (jump->flags & (PATCH_ABS48 | PATCH_ABS64))
+				buf_ptr[2] = MOVK | dst | (((addr >> 32) & 0xffff) << 5) | (2 << 21);
+			if (jump->flags & PATCH_ABS64)
+				buf_ptr[3] = MOVK | dst | (((addr >> 48) & 0xffff) << 5) | (3 << 21);
+		} while (0);
+		jump = jump->next;
+	}
+
+	compiler->error = SLJIT_ERR_COMPILED;
+	compiler->executable_offset = executable_offset;
+	compiler->executable_size = (code_ptr - code) * sizeof(sljit_ins);
+
+	code = (sljit_ins *)SLJIT_ADD_EXEC_OFFSET(code, executable_offset);
+	code_ptr = (sljit_ins *)SLJIT_ADD_EXEC_OFFSET(code_ptr, executable_offset);
+#endif
+	SLJIT_CACHE_FLUSH(code, code_ptr);
+	return code;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_has_cpu_feature(sljit_s32 feature_type)
@@ -79,7 +280,19 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 	sljit_s32 options, sljit_s32 arg_types, sljit_s32 scratches, sljit_s32 saveds,
 	sljit_s32 fscratches, sljit_s32 fsaveds, sljit_s32 local_size)
 {
-	abort();
+	sljit_s32 args, i, tmp, offs, prev, saved_regs_size;
+
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_enter(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size));
+	set_emit_enter(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size);
+
+	// saved registers go in callee allocated save area
+	compiler->local_size = (local_size+0xf)&~0xf;
+
+	FAIL_IF(push_inst(compiler, stmg(r6, r15, 48, r15))); // save registers TODO(MGM): optimize
+	FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)local_size))));
+
+	return SLJIT_SUCCESS;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_set_context(struct sljit_compiler *compiler,
@@ -91,7 +304,17 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_set_context(struct sljit_compiler *comp
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *compiler, sljit_s32 op, sljit_s32 src, sljit_sw srcw)
 {
-	abort();
+	sljit_s32 local_size;
+	sljit_s32 i, tmp, offs, prev, saved_regs_size;
+
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_return(compiler, op, src, srcw));
+
+	// FAIL_IF(emit_mov_before_return(compiler, op, src, srcw));
+	FAIL_IF(push_inst(compiler, lmg(r6, r15, 48 + compiler->local_size, r15))); // restore registers TODO(MGM): optimize
+	FAIL_IF(push_inst(compiler, br(r14))); // return
+
+	return SLJIT_SUCCESS;
 }
 
 /* --------------------------------------------------------------------- */
