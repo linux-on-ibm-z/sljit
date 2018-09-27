@@ -123,6 +123,11 @@ SLJIT_S390X_INSTRUCTION(aghi, sljit_gpr dst, sljit_s16 imm)
 	return 0xa70b0000 | dst << 20 | (imm&0xffff);
 }
 
+SLJIT_S390X_INSTRUCTION(llill, sljit_gpr dst, sljit_u16 imm)
+{
+	return 0xa50f0000 | dst << 20 | (imm&0xffff);
+}
+
 SLJIT_S390X_INSTRUCTION(stmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
 {
 	return 0xeb0000000024 | start << 36 | end << 32 | b << 28 | disp_s20(d) << 8;
@@ -138,7 +143,32 @@ SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 	return 0x07f0 | target;
 }
 
+
 #undef SLJIT_S390X_INSTRUCTION
+
+/* Helper functions for instructions. */
+
+static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr target, sljit_sw bits)
+{
+	// unsigned
+	sljit_uw  u64 = (sljit_uw)bits;
+	sljit_u32 u32 = (sljit_u32)bits;
+	sljit_u16 u16 = (sljit_u16)bits;
+
+	// signed
+	sljit_sw  s64 = (sljit_sw)bits;
+	sljit_s32 s32 = (sljit_s32)bits;
+	sljit_s16 s16 = (sljit_s16)bits;
+
+	if (s64 == (sljit_sw)s16) {
+		return push_inst(compiler, lghi(target, s16));
+	}
+	if (u64 == (sljit_uw)u16) {
+		return push_inst(compiler, llill(target, u16));
+	}
+	// TODO(mundaym): other immediates
+	abort();
+}
 
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
 {
@@ -375,9 +405,12 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 	op = GET_OPCODE(op);
 	if (op >= SLJIT_MOV && op <= SLJIT_MOV_P) {
 		/* Both operands are registers. */
-		if (FAST_IS_REG(src) && FAST_IS_REG(dst)) {
+		if (FAST_IS_REG(dst) && FAST_IS_REG(src)) {
 			// TODO(mundaym): sign/zero extension
 			return push_inst(compiler, lgr(gpr(dst), gpr(src)));
+		}
+		if (FAST_IS_REG(dst) && (src & SLJIT_IMM)) {
+			return push_load_imm_inst(compiler, gpr(dst), srcw);
 		}
 		abort();
 	}
