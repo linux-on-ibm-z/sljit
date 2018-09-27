@@ -53,6 +53,7 @@ const sljit_gpr r15 = 15; // stack pointer
 
 static sljit_uw sizeof_ins(sljit_ins ins)
 {
+	if (ins == 0) return 2; // keep faulting instructions
 	if ((ins&0x00000000ffff) == ins) return 2;
 	if ((ins&0x0000ffffffff) == ins) return 4;
 	if ((ins&0xffffffffffff) == ins) return 6;
@@ -63,6 +64,8 @@ static sljit_s32 push_inst(struct sljit_compiler *compiler, sljit_ins ins)
 {
 	sljit_ins *ibuf = (sljit_ins *)ensure_buf(compiler, sizeof(sljit_ins));
 	FAIL_IF(!ibuf);
+	*ibuf = ins;
+	compiler->size++;
 	return SLJIT_SUCCESS;
 }
 
@@ -70,7 +73,7 @@ static sljit_s32 encode_inst(void **ptr, sljit_ins ins)
 {
 	sljit_u16 *ibuf = (sljit_u16 *)*ptr;
 	sljit_uw size = sizeof_ins(ins);
-	SLJIT_ASSERT(size&6 == size);
+	SLJIT_ASSERT((size&6) == size);
 	switch (size) {
 	case 6: *ibuf++ = (sljit_u16)(ins >> 32);
 	case 4: *ibuf++ = (sljit_u16)(ins >> 16);
@@ -128,7 +131,8 @@ SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
 {
 	CHECK_ERROR_PTR();
-	CHECK_PTR(check_sljit_generate_code(compiler));
+	// TODO(mundaym): re-enable checks
+	//CHECK_PTR(check_sljit_generate_code(compiler));
 
 	// calculate the size of the code
 	sljit_uw ins_size = 0;
