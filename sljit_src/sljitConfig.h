@@ -51,6 +51,7 @@
 /* #define SLJIT_CONFIG_MIPS_64 1 */
 /* #define SLJIT_CONFIG_SPARC_32 1 */
 /* #define SLJIT_CONFIG_TILEGX 1 */
+/* #define SLJIT_CONFIG_S390X 1 */
 
 /* #define SLJIT_CONFIG_AUTO 1 */
 /* #define SLJIT_CONFIG_UNSUPPORTED 1 */

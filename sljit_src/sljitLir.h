@@ -725,6 +725,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fast_return(struct sljit_compiler 
    mips:   [reg+imm], -65536 <= imm <= 65535
    sparc:  [reg+imm], -4096 <= imm <= 4095
            [reg+reg] is supported
+   s390x:  [reg+imm], -2^19 <= imm < 2^19
+           [reg+reg] is supported
+           Write-back is not supported
 */
 
 /* Macros for specifying operand types. */
