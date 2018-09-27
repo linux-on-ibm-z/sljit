@@ -34,8 +34,8 @@ typedef sljit_uw sljit_gpr; // general purpose register [0-15]
 typedef sljit_uw sljit_fpr; // floating-point register [0-15]
 
 // general purpose registers
-const sljit_gpr r0 = 0; // 0 in address calculations
-const sljit_gpr r1 = 1;
+const sljit_gpr r0 = 0; // 0 in address calculations; reserved
+const sljit_gpr r1 = 1; // reserved
 const sljit_gpr r2 = 2; // 1st argument
 const sljit_gpr r3 = 3; // 2nd argument
 const sljit_gpr r4 = 4; // 3rd argument
@@ -50,6 +50,18 @@ const sljit_gpr r12 = 12;
 const sljit_gpr r13 = 13;
 const sljit_gpr r14 = 14; // return address
 const sljit_gpr r15 = 15; // stack pointer
+
+static const sljit_gpr reg_map[SLJIT_NUMBER_OF_REGISTERS + 1] = {
+	2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15
+};
+
+static sljit_gpr gpr(sljit_s32 r)
+{
+	SLJIT_ASSERT(r != SLJIT_UNUSED);
+	r -= SLJIT_R0; // normalize
+	SLJIT_ASSERT(r < (sizeof(reg_map) / sizeof(reg_map[0])));
+	return reg_map[r];
+}
 
 static sljit_uw sizeof_ins(sljit_ins ins)
 {
@@ -294,7 +306,18 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 	compiler->local_size = (local_size+0xf)&~0xf;
 
 	FAIL_IF(push_inst(compiler, stmg(r6, r15, 48, r15))); // save registers TODO(MGM): optimize
-	FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)local_size))));
+	if (local_size != 0)
+		FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)local_size))));
+
+	args = get_arg_count(arg_types);
+
+	if (args >= 1)
+		FAIL_IF(push_inst(compiler, lgr(gpr(SLJIT_S0), gpr(SLJIT_R0))));
+	if (args >= 2)
+		FAIL_IF(push_inst(compiler, lgr(gpr(SLJIT_S1), gpr(SLJIT_R1))));
+	if (args >= 3)
+		FAIL_IF(push_inst(compiler, lgr(gpr(SLJIT_S2), gpr(SLJIT_R2))));
+	SLJIT_ASSERT(args < 4);
 
 	return SLJIT_SUCCESS;
 }
@@ -314,7 +337,8 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *comp
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_return(compiler, op, src, srcw));
 
-	// FAIL_IF(emit_mov_before_return(compiler, op, src, srcw));
+	FAIL_IF(emit_mov_before_return(compiler, op, src, srcw));
+
 	FAIL_IF(push_inst(compiler, lmg(r6, r15, 48 + compiler->local_size, r15))); // restore registers TODO(MGM): optimize
 	FAIL_IF(push_inst(compiler, br(r14))); // return
 
@@ -334,6 +358,29 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
         sljit_s32 dst, sljit_sw dstw,
         sljit_s32 src, sljit_sw srcw)
 {
+	sljit_s32 dst_r, flags, mem_flags;
+	sljit_s32 op_flags = GET_ALL_FLAGS(op);
+
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_op1(compiler, op, dst, dstw, src, srcw));
+	//TODO(mundaym): re-enable
+	//ADJUST_LOCAL_OFFSET(dst, dstw);
+	//ADJUST_LOCAL_OFFSET(src, srcw);
+
+	if (dst == SLJIT_UNUSED && !HAS_FLAGS(op)) {
+		// TODO(mundaym): prefetch
+		abort();
+	}
+
+	op = GET_OPCODE(op);
+	if (op >= SLJIT_MOV && op <= SLJIT_MOV_P) {
+		/* Both operands are registers. */
+		if (FAST_IS_REG(src) && FAST_IS_REG(dst)) {
+			// TODO(mundaym): sign/zero extension
+			return push_inst(compiler, lgr(gpr(dst), gpr(src)));
+		}
+		abort();
+	}
 	abort();
 }
 
