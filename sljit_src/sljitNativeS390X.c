@@ -108,25 +108,296 @@ static sljit_uw disp_s20(sljit_s32 d)
 	return dh | dl;
 }
 
-SLJIT_S390X_INSTRUCTION(lgr, sljit_gpr dst, sljit_gpr src)
-{
-	return 0xb9040000 | dst << 4 | src;
+// RR form instructions
+#define SLJIT_S390X_RR(name, pattern) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src) \
+{ \
+	return pattern | ((dst&0xf)<<4) | (src&0xf); \
 }
 
-SLJIT_S390X_INSTRUCTION(lghi, sljit_gpr dst, sljit_s16 imm)
-{
-	return 0xa7090000 | dst << 20 | (imm&0xffff);
+// ADD
+SLJIT_S390X_RR(ar,   0x1a00)
+
+// ADD LOGICAL
+SLJIT_S390X_RR(alr,  0x1e00)
+
+// AND
+SLJIT_S390X_RR(nr,   0x1400)
+
+// BRANCH AND LINK
+SLJIT_S390X_RR(balr, 0x0500)
+
+// BRANCH AND SAVE
+SLJIT_S390X_RR(basr, 0x0d00)
+
+// BRANCH ON CONDITION
+SLJIT_S390X_RR(bcr,  0x0700) // TODO(mundaym): type for mask?
+
+// BRANCH AND COUNT
+SLJIT_S390X_RR(bctr, 0x0600)
+
+// COMPARE
+SLJIT_S390X_RR(cr,   0x1900)
+
+// COMPARE LOGICAL
+SLJIT_S390X_RR(clr,  0x1500)
+
+// DIVIDE
+SLJIT_S390X_RR(dr,   0x1d00)
+
+// EXCLUSIVE OR
+SLJIT_S390X_RR(xr,   0x1700)
+
+// LOAD
+SLJIT_S390X_RR(lr,   0x1800)
+
+// LOAD AND TEST
+SLJIT_S390X_RR(ltr,  0x1200)
+
+// LOAD COMPLEMENT
+SLJIT_S390X_RR(lcr,  0x1300)
+
+// LOAD NEGATIVE
+SLJIT_S390X_RR(lnr,  0x1100)
+
+// LOAD POSITIVE
+SLJIT_S390X_RR(lpr,  0x1000)
+
+// MULTIPLY
+SLJIT_S390X_RR(mr,   0x1c00)
+
+// OR
+SLJIT_S390X_RR(or,   0x1600)
+
+// SUBTRACT
+SLJIT_S390X_RR(sr,   0x1b00)
+
+// SUBTRACT LOGICAL
+SLJIT_S390X_RR(slr,  0x1f00)
+
+#undef SLJIT_S390X_RR
+
+// RRE form instructions
+#define SLJIT_S390X_RRE(name, pattern) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src) \
+{ \
+	return pattern | ((dst&0xf)<<4) | (src&0xf); \
 }
 
-SLJIT_S390X_INSTRUCTION(aghi, sljit_gpr dst, sljit_s16 imm)
-{
-	return 0xa70b0000 | dst << 20 | (imm&0xffff);
+// ADD
+SLJIT_S390X_RRE(agr,   0xb9080000)
+SLJIT_S390X_RRE(agfr,  0xb9180000)
+
+// ADD LOGICAL
+SLJIT_S390X_RRE(algr,  0xb90a0000)
+SLJIT_S390X_RRE(algfr, 0xb91a0000)
+
+// ADD LOGICAL WITH CARRY
+SLJIT_S390X_RRE(alcr,  0xb9980000)
+SLJIT_S390X_RRE(alcgr, 0xb9880000)
+
+// AND
+SLJIT_S390X_RRE(ngr,   0xb9800000)
+
+// BRANCH ON COUNT
+SLJIT_S390X_RRE(bctgr, 0xb9460000)
+
+// COMPARE
+SLJIT_S390X_RRE(cgr,   0xb9200000)
+SLJIT_S390X_RRE(cgfr,  0xb9300000)
+
+// COMPARE LOGICAL
+SLJIT_S390X_RRE(clgr,  0xb9210000)
+SLJIT_S390X_RRE(clgfr, 0xb9310000)
+
+// DIVIDE LOGICAL
+SLJIT_S390X_RRE(dlr,   0xb9970000)
+SLJIT_S390X_RRE(dlgr,  0xb9870000)
+
+// DIVIDE SINGLE
+SLJIT_S390X_RRE(dsgr,  0xb90d0000)
+SLJIT_S390X_RRE(dsgfr, 0xb91d0000)
+
+// EXCLUSIVE OR
+SLJIT_S390X_RRE(xgr,   0xb9820000)
+
+// LOAD
+SLJIT_S390X_RRE(lgr,   0xb9040000)
+SLJIT_S390X_RRE(lgfr,  0xb9140000)
+
+// LOAD AND TEST
+SLJIT_S390X_RRE(ltgr,  0xb9020000)
+SLJIT_S390X_RRE(ltgfr, 0xb9120000)
+
+// LOAD BYTE
+SLJIT_S390X_RRE(lbr,   0xb9260000)
+SLJIT_S390X_RRE(lgbr,  0xb9060000)
+
+// LOAD COMPLEMENT
+SLJIT_S390X_RRE(lcgr,  0xb9030000)
+SLJIT_S390X_RRE(lcgfr, 0xb9130000)
+
+// LOAD HALFWORD
+SLJIT_S390X_RRE(lhr,   0xb9270000)
+SLJIT_S390X_RRE(lghr,  0xb9070000)
+
+// LOAD LOGICAL
+SLJIT_S390X_RRE(llgfr, 0xb9160000)
+
+// LOAD LOGICAL CHARACTER
+SLJIT_S390X_RRE(llcr,  0xb9940000)
+SLJIT_S390X_RRE(llgcr, 0xb9840000)
+
+// LOAD LOGICAL HALFWORD
+SLJIT_S390X_RRE(llhr,  0xb9950000)
+SLJIT_S390X_RRE(llghr, 0xb9850000)
+
+// LOAD NEGATIVE
+SLJIT_S390X_RRE(lngr,  0xb9010000)
+SLJIT_S390X_RRE(lngfr, 0xb9110000)
+
+// LOAD POSITIVE
+SLJIT_S390X_RRE(lpgr,  0xb9900000)
+SLJIT_S390X_RRE(lpgfr, 0xb9100000)
+
+// LOAD REVERSED
+SLJIT_S390X_RRE(lrvr,  0xb91f0000)
+SLJIT_S390X_RRE(lrvgr, 0xb90f0000)
+
+// MULTIPLY LOGICAL
+SLJIT_S390X_RRE(mlr,   0xb9960000)
+SLJIT_S390X_RRE(mlgr,  0xb9860000)
+
+// MULTIPLY SINGLE
+SLJIT_S390X_RRE(msr,   0xb2520000)
+SLJIT_S390X_RRE(msgr,  0xb90c0000)
+SLJIT_S390X_RRE(msgfr, 0xb91c0000)
+
+// OR
+SLJIT_S390X_RRE(ogr,   0xb9810000)
+
+// SUBTRACT
+SLJIT_S390X_RRE(sgr,   0xb9090000)
+SLJIT_S390X_RRE(sgfr,  0xb9190000)
+
+// SUBTRACT LOGICAL
+SLJIT_S390X_RRE(slgr,  0xb90b0000)
+SLJIT_S390X_RRE(slgfr, 0xb91b0000)
+
+// SUBTRACT LOGICAL WITH BORROW
+SLJIT_S390X_RRE(slbr,  0xb9990000)
+SLJIT_S390X_RRE(slbgr, 0xb9890000)
+
+#undef SLJIT_S390X_RRE
+
+// RI-a form instructions
+#define SLJIT_S390X_RIA(name, pattern, imm_type) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, imm_type imm) \
+{ \
+	return pattern | ((reg&0xf) << 20) | (imm&0xffff); \
 }
 
-SLJIT_S390X_INSTRUCTION(llill, sljit_gpr dst, sljit_u16 imm)
-{
-	return 0xa50f0000 | dst << 20 | (imm&0xffff);
+// ADD HALFWORD IMMEDIATE
+SLJIT_S390X_RIA(ahi,   0xa70a0000, sljit_s16)
+SLJIT_S390X_RIA(aghi,  0xa70b0000, sljit_s16)
+
+// AND IMMEDIATE
+SLJIT_S390X_RIA(nihh,  0xa5040000, sljit_u16)
+SLJIT_S390X_RIA(nihl,  0xa5050000, sljit_u16)
+SLJIT_S390X_RIA(nilh,  0xa5060000, sljit_u16)
+SLJIT_S390X_RIA(nill,  0xa5070000, sljit_u16)
+
+// COMPARE HALFWORD IMMEDIATE
+SLJIT_S390X_RIA(chi,   0xa70e0000, sljit_s16)
+SLJIT_S390X_RIA(cghi,  0xa70f0000, sljit_s16)
+
+// INSERT IMMEDIATE
+SLJIT_S390X_RIA(iilh,  0xa5020000, sljit_u16)
+SLJIT_S390X_RIA(iill,  0xa5030000, sljit_u16)
+
+// LOAD HALFWORD IMMEDIATE
+SLJIT_S390X_RIA(lhi,   0xa7080000, sljit_s16)
+SLJIT_S390X_RIA(lghi,  0xa7090000, sljit_s16)
+
+// LOAD LOGICAL IMMEDIATE
+SLJIT_S390X_RIA(llihh, 0xa50c0000, sljit_u16)
+SLJIT_S390X_RIA(llihl, 0xa50d0000, sljit_u16)
+SLJIT_S390X_RIA(llilh, 0xa50e0000, sljit_u16)
+SLJIT_S390X_RIA(llill, 0xa50f0000, sljit_u16)
+
+// MULTIPLY HALFWORD IMMEDIATE
+SLJIT_S390X_RIA(mhi,   0xa70c0000, sljit_s16)
+SLJIT_S390X_RIA(mghi,  0xa70d0000, sljit_s16)
+
+// OR IMMEDIATE
+SLJIT_S390X_RIA(oihh,  0xa5080000, sljit_u16)
+SLJIT_S390X_RIA(oihl,  0xa5090000, sljit_u16)
+SLJIT_S390X_RIA(oilh,  0xa50a0000, sljit_u16)
+SLJIT_S390X_RIA(oill,  0xa50b0000, sljit_u16)
+
+// TEST UNDER MASK
+SLJIT_S390X_RIA(tmhh,  0xa7020000, sljit_u16)
+SLJIT_S390X_RIA(tmhl,  0xa7030000, sljit_u16)
+SLJIT_S390X_RIA(tmlh,  0xa7000000, sljit_u16)
+SLJIT_S390X_RIA(tmll,  0xa7010000, sljit_u16)
+
+#undef SLJIT_S390X_RIA
+
+// RIL-a form instructions (requires extended immediate facility)
+#define SLJIT_S390X_RILA(name, pattern, imm_type) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, imm_type imm) \
+{ \
+	return pattern | ((sljit_ins)(reg&0xf) << 36) | (imm&0xffffffff); \
 }
+
+// ADD IMMEDIATE
+SLJIT_S390X_RILA(afi,   0xc20900000000, sljit_s32)
+SLJIT_S390X_RILA(agfi,  0xc20800000000, sljit_s32)
+
+// ADD LOGICAL IMMEDIATE
+SLJIT_S390X_RILA(alfi,  0xc20b00000000, sljit_u32)
+SLJIT_S390X_RILA(algfi, 0xc20a00000000, sljit_u32)
+
+// AND IMMEDIATE
+SLJIT_S390X_RILA(nihf,  0xc00a00000000, sljit_u32)
+SLJIT_S390X_RILA(nilf,  0xc00b00000000, sljit_u32)
+
+// COMPARE IMMEDIATE
+SLJIT_S390X_RILA(cfi,   0xc20d00000000, sljit_s32)
+SLJIT_S390X_RILA(cgfi,  0xc20c00000000, sljit_s32)
+
+// COMPARE LOGICAL IMMEDIATE
+SLJIT_S390X_RILA(clfi,  0xc20f00000000, sljit_u32)
+SLJIT_S390X_RILA(clgfi, 0xc20e00000000, sljit_u32)
+
+// EXCLUSIVE OR IMMEDIATE
+SLJIT_S390X_RILA(xihf,  0xc00600000000, sljit_u32)
+SLJIT_S390X_RILA(xilf,  0xc00700000000, sljit_u32)
+
+// INSERT IMMEDIATE
+SLJIT_S390X_RILA(iihf,  0xc00800000000, sljit_u32)
+SLJIT_S390X_RILA(iilf,  0xc00900000000, sljit_u32)
+
+// LOAD IMMEDIATE
+SLJIT_S390X_RILA(lgfi,  0xc00100000000, sljit_s32)
+
+// LOAD LOGICAL IMMEDIATE
+SLJIT_S390X_RILA(llihf, 0xc00e00000000, sljit_u32)
+SLJIT_S390X_RILA(llilf, 0xc00f00000000, sljit_u32)
+
+// MULTIPLY SINGLE IMMEDIATE
+SLJIT_S390X_RILA(msfi,  0xc20100000000, sljit_s32)
+SLJIT_S390X_RILA(msgfi, 0xc20000000000, sljit_s32)
+
+// OR IMMEDIATE
+SLJIT_S390X_RILA(oihf,  0xc00c00000000, sljit_u32)
+SLJIT_S390X_RILA(oilf,  0xc00d00000000, sljit_u32)
+
+// SUBTRACT LOGICAL IMMEDIATE
+SLJIT_S390X_RILA(slfi,  0xc20500000000, sljit_u32)
+SLJIT_S390X_RILA(slgfi, 0xc20400000000, sljit_u32)
+
+#undef SLJIT_S390X_RILA
 
 SLJIT_S390X_INSTRUCTION(stmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
 {
@@ -143,30 +414,47 @@ SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 	return 0x07f0 | target;
 }
 
-
 #undef SLJIT_S390X_INSTRUCTION
 
 /* Helper functions for instructions. */
 
-static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr target, sljit_sw bits)
+static int have_eimm() { return 1; } // TODO(mundaym): make conditional
+
+// load 64-bit immediate into register without clobbering flags
+static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr target, sljit_sw v)
 {
-	// unsigned
-	sljit_uw  u64 = (sljit_uw)bits;
-	sljit_u32 u32 = (sljit_u32)bits;
-	sljit_u16 u16 = (sljit_u16)bits;
-
-	// signed
-	sljit_sw  s64 = (sljit_sw)bits;
-	sljit_s32 s32 = (sljit_s32)bits;
-	sljit_s16 s16 = (sljit_s16)bits;
-
-	if (s64 == (sljit_sw)s16) {
-		return push_inst(compiler, lghi(target, s16));
+	// 4 byte instructions
+	if (v == (sljit_sw)((sljit_s16)v)) {
+		return push_inst(compiler, lghi(target, (sljit_s16)v));
 	}
-	if (u64 == (sljit_uw)u16) {
-		return push_inst(compiler, llill(target, u16));
+	if (v == (v & 0x000000000000ffff)) {
+		return push_inst(compiler, llill(target, (sljit_u16)(v)));
 	}
-	// TODO(mundaym): other immediates
+	if (v == (v & 0x00000000ffff0000)) {
+		return push_inst(compiler, llilh(target, (sljit_u16)(v>>16)));
+	}
+	if (v == (v & 0x0000ffff00000000)) {
+		return push_inst(compiler, llihl(target, (sljit_u16)(v>>32)));
+	}
+	if (v == (v & 0xffff000000000000)) {
+		return push_inst(compiler, llihh(target, (sljit_u16)(v>>48)));
+	}
+
+	// 6 byte instructions (requires extended immediate facility)
+	if (have_eimm()) {
+		if (v == (sljit_sw)((sljit_s32)v)) {
+			return push_inst(compiler, lghi(target, (sljit_s32)v));
+		}
+		if (v == (v & 0x00000000ffffffff)) {
+			return push_inst(compiler, llilf(target, (sljit_u32)(v)));
+		}
+		if (v == (v & 0xffffffff00000000)) {
+			return push_inst(compiler, llihf(target, (sljit_u32)(v>>32)));
+		}
+		FAIL_IF(push_inst(compiler, llilf(target, (sljit_u32)(v))));
+		return push_inst(compiler, iihf(target, (sljit_u32)(v>>32)));
+	}
+	// TODO(mundaym): instruction sequences that don't use extended immediates
 	abort();
 }
 
@@ -336,8 +624,10 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 	compiler->local_size = (local_size+0xf)&~0xf;
 
 	FAIL_IF(push_inst(compiler, stmg(r6, r15, 48, r15))); // save registers TODO(MGM): optimize
-	if (local_size != 0)
+	if (local_size != 0) {
+		SLJIT_ASSERT(local_size < ((1<<15) - 1));
 		FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)local_size))));
+	}
 
 	args = get_arg_count(arg_types);
 

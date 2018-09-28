@@ -16,7 +16,7 @@ EXTRA_LDFLAGS=
 endif
 
 CPPFLAGS = $(EXTRA_CPPFLAGS) -DSLJIT_CONFIG_AUTO=1 -Isljit_src
-CFLAGS += -g -O0 -Wall
+CFLAGS += -g -O0 -Wall -Wno-unused-function -Wno-unused-variable
 REGEX_CFLAGS += $(CFLAGS) -fshort-wchar
 LDFLAGS = $(EXTRA_LDFLAGS)
 
