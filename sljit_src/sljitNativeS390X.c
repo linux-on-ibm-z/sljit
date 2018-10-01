@@ -51,6 +51,9 @@ const sljit_gpr r13 = 13;
 const sljit_gpr r14 = 14; // return address
 const sljit_gpr r15 = 15; // stack pointer
 
+const sljit_gpr tmp0 = 0; // r0
+const sljit_gpr tmp1 = 1; // r1
+
 static const sljit_gpr reg_map[SLJIT_NUMBER_OF_REGISTERS + 1] = {
 	2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15
 };
@@ -103,14 +106,27 @@ static int have_eimm() { return 1; }  // TODO(mundaym): make conditional
 // long-displacement facility
 static int have_ldisp() { return 1; } // TODO(mundaym): make conditional
 
+// distinct-operands facility
+static int have_distop() { return 1; } // TODO(mundaym): make conditional
+
 #define SLJIT_S390X_INSTRUCTION(op, ...) \
 static sljit_ins op(__VA_ARGS__)
 
+static int is_s20(sljit_sw d)
+{
+	sljit_uw l = sizeof(sljit_sw) - 20;
+	sljit_sw d20 = (d << l) >> l;
+	return d == d20 ? 1 : 0;
+}
+
+static int is_u12(sljit_sw d)
+{
+	return d == (d & 0xfff) ? 1 : 0;
+}
+
 static sljit_uw disp_s20(sljit_s32 d)
 {
-	if (d >> 20 != 0 && d >> 20 != -1) {
-		abort(); // out of range
-	}
+	SLJIT_ASSERT(is_s20(d));
 	sljit_uw dh = (d >> 12) & 0xff;
 	sljit_uw dl = (d << 8) & 0xfff00;
 	return dh | dl;
@@ -646,16 +662,28 @@ SLJIT_S390X_RXYA(slbg,  0xe30000000089, 1)
 
 #undef SLJIT_S390X_RXYA
 
-
-SLJIT_S390X_INSTRUCTION(stmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
-{
-	return 0xeb0000000024 | start << 36 | end << 32 | b << 28 | disp_s20(d) << 8;
+// RSY-a instructions
+#define SLJIT_S390X_RSYA(name, pattern, cond) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_sw d, sljit_gpr b) \
+{ \
+	SLJIT_ASSERT(cond); \
+	sljit_ins r1 = (sljit_ins)(dst&0xf) << 36; \
+	sljit_ins r3 = (sljit_ins)(src&0xf) << 32; \
+	sljit_ins b2 = (sljit_ins)(b&0xf) << 28; \
+	sljit_ins d2 = (sljit_ins)disp_s20(d) << 8; \
+	return pattern | r1 | r3 | b2 | d2; \
 }
 
-SLJIT_S390X_INSTRUCTION(lmg, sljit_gpr start, sljit_gpr end, sljit_s32 d, sljit_gpr b)
-{
-	return 0xeb0000000004 | start << 36 | end << 32 | b << 28 | disp_s20(d) << 8;
-}
+// LOAD MULTIPLE
+SLJIT_S390X_RSYA(lmg,   0xeb0000000004, 1);
+
+// SHIFT LEFT LOGICAL
+SLJIT_S390X_RSYA(sllg,  0xeb000000000d, 1);
+
+// STORE MULTIPLE
+SLJIT_S390X_RSYA(stmg,  0xeb0000000024, 1);
+
+#undef SLJIT_S390X_RSYA
 
 SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 {
@@ -664,12 +692,11 @@ SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 
 #undef SLJIT_S390X_INSTRUCTION
 
-
 // load 64-bit immediate into register without clobbering flags
 static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr target, sljit_sw v)
 {
 	// 4 byte instructions
-	if (v == (sljit_sw)((sljit_s16)v)) {
+	if (v == ((v << 48)>>48)) {
 		return push_inst(compiler, lghi(target, (sljit_s16)v));
 	}
 	if (v == (v & 0x000000000000ffff)) {
@@ -687,8 +714,8 @@ static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr t
 
 	// 6 byte instructions (requires extended immediate facility)
 	if (have_eimm()) {
-		if (v == (sljit_sw)((sljit_s32)v)) {
-			return push_inst(compiler, lghi(target, (sljit_s32)v));
+		if (v == ((v << 32)>>32)) {
+			return push_inst(compiler, lgfi(target, (sljit_s32)v));
 		}
 		if (v == (v & 0x00000000ffffffff)) {
 			return push_inst(compiler, llilf(target, (sljit_u32)(v)));
@@ -701,6 +728,46 @@ static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr t
 	}
 	// TODO(mundaym): instruction sequences that don't use extended immediates
 	abort();
+}
+
+struct addr {
+	sljit_gpr base;
+	sljit_gpr index;
+	sljit_sw  offset;
+};
+
+static sljit_s32 make_addr(
+	struct sljit_compiler *compiler,
+	struct addr *addr,
+	sljit_s32 mem, sljit_sw off,
+	sljit_gpr tmp /* clobbered, must not be R0 */)
+{
+	sljit_gpr base = r0;
+	if (mem & REG_MASK) {
+		base = gpr(mem & REG_MASK);
+	}
+	sljit_gpr index = r0;
+	if (mem & OFFS_REG_MASK) {
+		index = gpr(OFFS_REG(mem));
+		if (off != 0) {
+			// shift and put the result into tmp
+			SLJIT_ASSERT(0 <= off && off < 64);
+			FAIL_IF(push_inst(compiler, sllg(tmp, index, off, 0)));
+			index = tmp;
+			off = 0; // clear offset
+		}
+	} else if (!is_s20(off)) {
+		FAIL_IF(push_load_imm_inst(compiler, tmp, off));
+		index = tmp;
+		off = 0; // clear offset
+	}
+	SLJIT_ASSERT(base == r0 || base != index);
+	*addr = (struct addr) {
+		.base = base,
+		.index = index,
+		.offset = off
+	};
+	return SLJIT_SUCCESS;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
@@ -936,16 +1003,92 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		// TODO(mundaym): prefetch
 		abort();
 	}
+	if (dst == SLJIT_UNUSED || src == SLJIT_UNUSED) {
+		// TODO(mundaym): handle
+		abort();
+	}
 
 	op = GET_OPCODE(op);
 	if (op >= SLJIT_MOV && op <= SLJIT_MOV_P) {
-		/* Both operands are registers. */
+		// LOAD REGISTER
 		if (FAST_IS_REG(dst) && FAST_IS_REG(src)) {
 			// TODO(mundaym): sign/zero extension
 			return push_inst(compiler, lgr(gpr(dst), gpr(src)));
 		}
+		// LOAD IMMEDIATE
 		if (FAST_IS_REG(dst) && (src & SLJIT_IMM)) {
 			return push_load_imm_inst(compiler, gpr(dst), srcw);
+		}
+		// LOAD
+		if (FAST_IS_REG(dst) && (src & SLJIT_MEM)) {
+			sljit_gpr reg = gpr(dst);
+			struct addr mem;
+			FAIL_IF(make_addr(compiler, &mem, src, srcw, tmp1));
+			switch (op) {
+			case SLJIT_MOV_U8:
+			case SLJIT_MOV_S8:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U16:
+			case SLJIT_MOV_S16:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U32:
+			case SLJIT_MOV_S32:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_P:
+			case SLJIT_MOV:
+				return push_inst(compiler,
+					lg(reg, mem.offset, mem.index, mem.base));
+			default:
+				SLJIT_UNREACHABLE();
+			}
+		}
+		// STORE
+		if ((dst & SLJIT_MEM) && FAST_IS_REG(src)) {
+			sljit_gpr reg = gpr(src);
+			struct addr mem;
+			FAIL_IF(make_addr(compiler, &mem, dst, dstw, tmp1));
+			switch (op) {
+			case SLJIT_MOV_U8:
+			case SLJIT_MOV_S8:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U16:
+			case SLJIT_MOV_S16:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U32:
+			case SLJIT_MOV_S32:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_P:
+			case SLJIT_MOV:
+				return push_inst(compiler,
+					stg(reg, mem.offset, mem.index, mem.base));
+			default:
+				SLJIT_UNREACHABLE();
+			}
+		}
+		// MOVE CHARACTERS
+		if ((dst & SLJIT_MEM) && (src & SLJIT_MEM)) {
+			struct addr mem;
+			FAIL_IF(make_addr(compiler, &mem, src, srcw, tmp1));
+			switch (op) {
+			case SLJIT_MOV_U8:
+			case SLJIT_MOV_S8:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U16:
+			case SLJIT_MOV_S16:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_U32:
+			case SLJIT_MOV_S32:
+				abort(); // TODO(mundaym): implement
+			case SLJIT_MOV_P:
+			case SLJIT_MOV:
+				FAIL_IF(push_inst(compiler,
+					lg(tmp0, mem.offset, mem.index, mem.base)));
+				FAIL_IF(make_addr(compiler, &mem, dst, dstw, tmp1));
+				return push_inst(compiler,
+					stg(tmp0, mem.offset, mem.index, mem.base));
+			default:
+				SLJIT_UNREACHABLE();
+			}
 		}
 		abort();
 	}
