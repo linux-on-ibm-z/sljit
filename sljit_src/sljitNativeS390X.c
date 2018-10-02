@@ -1413,13 +1413,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		FAIL_IF(push_load_imm_inst(compiler, src1_r, src1w));
 	}
 	if (src1 & SLJIT_MEM) {
-		struct addr mem;
-		FAIL_IF(make_addr_bxy(compiler, &mem, src1, src1w, tmp1));
-		if (op & SLJIT_I32_OP) {
-			abort(); // TODO(mundaym): implement
-		} else {
-			FAIL_IF(push_inst(compiler, lg(src1_r, mem.offset, mem.index, mem.base)));
-		}
+		FAIL_IF(load_word(compiler, src1_r, src1, src1w, tmp1, op & SLJIT_I32_OP));
 	}
 
 	if (is_shift(op)) {
@@ -1431,9 +1425,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		}
 		if (src2 & SLJIT_MEM) {
 			// shift amount (b) cannot be in r0 (i.e. tmp0)
-			struct addr mem;
-			FAIL_IF(make_addr_bxy(compiler, &mem, src2, src2w, tmp1));
-			FAIL_IF(push_inst(compiler, lg(tmp1, mem.offset, mem.index, mem.base)));
+			FAIL_IF(load_word(compiler, tmp1, src2, src2w, tmp1, op & SLJIT_I32_OP));
 			b = tmp1;
 		}
 		// src1 and dst share the same register in the base 32-bit ISA
@@ -1557,20 +1549,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		}
 		if (src2 & SLJIT_MEM) {
 			// load src2 into register
-			struct addr mem;
-			if (!have_ldisp() && (op & SLJIT_I32_OP)) {
-				FAIL_IF(make_addr_bx(compiler, &mem, src2, src2w, tmp1));
-			} else {
-				FAIL_IF(make_addr_bxy(compiler, &mem, src2, src2w, tmp1));
-			}
-			if (op & SLJIT_I32_OP) {
-				FAIL_IF(push_inst(compiler,
-					is_u12(mem.offset) ?
-					l(src2_r, mem.offset, mem.index, mem.base) :
-					ly(src2_r, mem.offset, mem.index, mem.base)));
-			} else {
-				FAIL_IF(push_inst(compiler, lg(src2_r, mem.offset, mem.index, mem.base)));
-			}
+			FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
 		}
 		// TODO(mundaym): distinct operand facility where needed
 		if (src1_r != dst_r && src1_r != tmp0) {
@@ -1602,20 +1581,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	// finally write the result to memory if required
 	if (dst & SLJIT_MEM) {
 		SLJIT_ASSERT(dst_r != tmp1);
-		struct addr mem;
-		if (!have_ldisp() && (op & SLJIT_I32_OP)) {
-			FAIL_IF(make_addr_bx(compiler, &mem, dst, dstw, tmp1));
-		} else {
-			FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
-		}
-		if (op & SLJIT_I32_OP) {
-			FAIL_IF(push_inst(compiler,
-				is_u12(mem.offset) ?
-				st(dst_r, mem.offset, mem.index, mem.base) :
-				sty(dst_r, mem.offset, mem.index, mem.base)));
-		} else {
-			FAIL_IF(push_inst(compiler, stg(dst_r, mem.offset, mem.index, mem.base)));
-		}
+		FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
 	}
 
 	return SLJIT_SUCCESS;
