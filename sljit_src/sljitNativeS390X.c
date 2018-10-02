@@ -1115,9 +1115,14 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 				SLJIT_UNREACHABLE();
 			}
 		}
-		// STORE
-		if ((dst & SLJIT_MEM) && FAST_IS_REG(src)) {
-			sljit_gpr reg = gpr(src);
+		// STORE and STORE IMMEDIATE
+		if ((dst & SLJIT_MEM) &&
+			(FAST_IS_REG(src) || (src & SLJIT_IMM))) {
+			sljit_gpr reg = FAST_IS_REG(src) ? gpr(src) : tmp0;
+			if (src & SLJIT_IMM) {
+				// TODO(mundaym): MOVE IMMEDIATE?
+				FAIL_IF(push_load_imm_inst(compiler, reg, srcw));
+			}
 			struct addr mem;
 			FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
 			switch (op) {
