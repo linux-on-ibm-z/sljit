@@ -843,6 +843,50 @@ static sljit_s32 make_addr_bx(
 	return SLJIT_SUCCESS;
 }
 
+static sljit_s32 load_word(struct sljit_compiler *compiler, sljit_gpr dst,
+		sljit_s32 src, sljit_sw srcw,
+		sljit_gpr tmp /* clobbered */, sljit_s32 is_32bit)
+{
+	SLJIT_ASSERT(src & SLJIT_MEM);
+	struct addr addr;
+	if (have_ldisp() || !is_32bit) {
+		FAIL_IF(make_addr_bxy(compiler, &addr, src, srcw, tmp));
+	} else {
+		FAIL_IF(make_addr_bx(compiler, &addr, src, srcw, tmp));
+	}
+	sljit_ins ins = 0;
+	if (is_32bit) {
+		ins = is_u12(addr.offset) ?
+			l(dst, addr.offset, addr.index, addr.base) :
+			ly(dst, addr.offset, addr.index, addr.base);
+	} else {
+		ins = lg(dst, addr.offset, addr.index, addr.base);
+	}
+	return push_inst(compiler, ins);
+}
+
+static sljit_s32 store_word(struct sljit_compiler *compiler, sljit_gpr src,
+		sljit_s32 dst, sljit_sw dstw,
+		sljit_gpr tmp /* clobbered */, sljit_s32 is_32bit)
+{
+	SLJIT_ASSERT(dst & SLJIT_MEM);
+	struct addr addr;
+	if (have_ldisp() || !is_32bit) {
+		FAIL_IF(make_addr_bxy(compiler, &addr, dst, dstw, tmp));
+	} else {
+		FAIL_IF(make_addr_bx(compiler, &addr, dst, dstw, tmp));
+	}
+	sljit_ins ins = 0;
+	if (is_32bit) {
+		ins = is_u12(addr.offset) ?
+			st(src, addr.offset, addr.index, addr.base) :
+			sty(src, addr.offset, addr.index, addr.base);
+	} else {
+		ins = stg(src, addr.offset, addr.index, addr.base);
+	}
+	return push_inst(compiler, ins);
+}
+
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
 {
 	CHECK_ERROR_PTR();
@@ -1063,7 +1107,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
         sljit_s32 dst, sljit_sw dstw,
         sljit_s32 src, sljit_sw srcw)
 {
-	sljit_s32 dst_r, flags, mem_flags;
+	sljit_s32 flags, mem_flags;
 	sljit_s32 op_flags = GET_ALL_FLAGS(op);
 
 	CHECK_ERROR();
@@ -1081,8 +1125,8 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		abort();
 	}
 
-	op = GET_OPCODE(op);
-	if (op >= SLJIT_MOV && op <= SLJIT_MOV_P) {
+	sljit_s32 opcode = GET_OPCODE(op);
+	if (opcode >= SLJIT_MOV && opcode <= SLJIT_MOV_P) {
 		// LOAD REGISTER
 		if (FAST_IS_REG(dst) && FAST_IS_REG(src)) {
 			// TODO(mundaym): sign/zero extension
@@ -1097,7 +1141,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			sljit_gpr reg = gpr(dst);
 			struct addr mem;
 			FAIL_IF(make_addr_bxy(compiler, &mem, src, srcw, tmp1));
-			switch (op) {
+			switch (opcode) {
 			case SLJIT_MOV_U8:
 			case SLJIT_MOV_S8:
 				abort(); // TODO(mundaym): implement
@@ -1125,7 +1169,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			}
 			struct addr mem;
 			FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
-			switch (op) {
+			switch (opcode) {
 			case SLJIT_MOV_U8:
 			case SLJIT_MOV_S8:
 				abort(); // TODO(mundaym): implement
@@ -1147,7 +1191,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		if ((dst & SLJIT_MEM) && (src & SLJIT_MEM)) {
 			struct addr mem;
 			FAIL_IF(make_addr_bxy(compiler, &mem, src, srcw, tmp1));
-			switch (op) {
+			switch (opcode) {
 			case SLJIT_MOV_U8:
 			case SLJIT_MOV_S8:
 				abort(); // TODO(mundaym): implement
@@ -1173,42 +1217,52 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 
 	SLJIT_ASSERT((src & SLJIT_IMM) == 0); // no immediates
 
-	sljit_gpr src_reg = tmp0;
-	if (FAST_IS_REG(src)) {
-		src_reg = gpr(REG_MASK & src);
-	}
+	sljit_gpr dst_r = FAST_IS_REG(dst) ? gpr(REG_MASK & dst) : tmp0;
+	sljit_gpr src_r = FAST_IS_REG(src) ? gpr(REG_MASK & src) : tmp0;
 	if (src & SLJIT_MEM) {
-		struct addr mem;
-		FAIL_IF(make_addr_bxy(compiler, &mem, src, srcw, tmp1));
-		if (src & SLJIT_I32_OP) {
-			abort(); // TODO(mundaym): 32-bit
-		} else {
-			FAIL_IF(push_inst(compiler, lg(src_reg, mem.offset, mem.index, mem.base)));
-		}
+		FAIL_IF(load_word(compiler, src_r, src, srcw, tmp1, src & SLJIT_I32_OP));
 	}
 
-	sljit_gpr dst_reg = tmp0;
-	if (FAST_IS_REG(dst)) {
-		dst_reg = gpr(REG_MASK & dst);
-	}
-
-	// TODO(mundaym): 32-bit
 	// TODO(mundaym): optimize loads and stores
-	switch (op) {
+	switch (opcode | (op & SLJIT_I32_OP)) {
 	case SLJIT_NOT:
-		// emulate NOT(x) with XOR(x, -1)
+		// emulate ~x with x^-1
 		FAIL_IF(push_load_imm_inst(compiler, tmp1, -1));
-		if (src_reg != dst_reg) {
-			FAIL_IF(push_inst(compiler, lgr(dst_reg, src_reg)));
+		if (src_r != dst_r) {
+			FAIL_IF(push_inst(compiler, lgr(dst_r, src_r)));
 		}
-		FAIL_IF(push_inst(compiler, xgr(dst_reg, tmp1)));
+		FAIL_IF(push_inst(compiler, xgr(dst_r, tmp1)));
+		break;
+	case SLJIT_NOT32:
+		// emulate ~x with x^-1
+		if (have_eimm()) {
+			FAIL_IF(push_inst(compiler, xilf(dst_r, -1)));
+		} else {
+			FAIL_IF(push_load_imm_inst(compiler, tmp1, -1));
+			if (src_r != dst_r) {
+				FAIL_IF(push_inst(compiler, lr(dst_r, src_r)));
+			}
+			FAIL_IF(push_inst(compiler, xr(dst_r, tmp1)));
+		}
 		break;
 	case SLJIT_NEG:
-		FAIL_IF(push_inst(compiler, lcgr(dst_reg, src_reg)));
+		FAIL_IF(push_inst(compiler, lcgr(dst_r, src_r)));
+		break;
+	case SLJIT_NEG32:
+		FAIL_IF(push_inst(compiler, lcr(dst_r, src_r)));
 		break;
 	case SLJIT_CLZ:
 		if (have_eimm()) {
-			FAIL_IF(push_inst(compiler, flogr(dst_reg, src_reg)));
+			FAIL_IF(push_inst(compiler, flogr(dst_r, src_r)));
+		} else {
+			abort(); // TODO(mundaym): no eimm (?)
+		}
+		break;
+	case SLJIT_CLZ32:
+		if (have_eimm()) {
+			FAIL_IF(push_inst(compiler, sllg(tmp1, src_r, 32, 0)));
+			FAIL_IF(push_inst(compiler, iilf(tmp1, 0xffffffff)));
+			FAIL_IF(push_inst(compiler, flogr(dst_r, src_r)));
 		} else {
 			abort(); // TODO(mundaym): no eimm (?)
 		}
@@ -1218,13 +1272,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 	}
 
 	if (dst & SLJIT_MEM) {
-		struct addr mem;
-		FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
-		if (src & SLJIT_I32_OP) {
-			abort(); // TODO(mundaym): 32-bit
-		} else {
-			FAIL_IF(push_inst(compiler, stg(dst_reg, mem.offset, mem.index, mem.base)));
-		}
+		FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
 	}
 
 	return SLJIT_SUCCESS;
