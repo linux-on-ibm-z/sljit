@@ -1321,6 +1321,20 @@ static int is_shift(sljit_s32 op) {
 		? 1 : 0;
 }
 
+static int sets_signed_flag(sljit_s32 op)
+{
+	switch (GET_FLAG_TYPE(op)) {
+	case SLJIT_OVERFLOW:
+	case SLJIT_NOT_OVERFLOW:
+	case SLJIT_SIG_LESS:
+	case SLJIT_SIG_LESS_EQUAL:
+	case SLJIT_SIG_GREATER:
+	case SLJIT_SIG_GREATER_EQUAL:
+		return 1;
+	}
+	return 0;
+}
+
 // have instruction for:
 //	op dst src imm
 // where dst and src are separate registers
@@ -1335,10 +1349,10 @@ static int have_op_2_imm(sljit_s32 op, sljit_sw imm) {
 	switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 	case SLJIT_ADD32:
 	case SLJIT_ADD:
-		if (op & SLJIT_SET_CARRY) {
-			return have_eimm() && is_u32(imm);
+		if (!HAS_FLAGS(op) || sets_signed_flag(op)) {
+			return have_eimm() ? is_s32(imm) : is_s16(imm);
 		}
-		return have_eimm() ? is_s32(imm) : is_s16(imm);
+		return have_eimm() && is_u32(imm);
 	case SLJIT_MUL32:
 	case SLJIT_MUL:
 		// TODO(mundaym): general extension check
@@ -1389,15 +1403,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 
 	sljit_gpr dst_r = SLOW_IS_REG(dst) ? gpr(dst & REG_MASK) : tmp0;
 
-	// convert SUB(x, imm) to ADD(x, -imm)
-	if ((src2 & SLJIT_IMM) && !(op & SLJIT_SET_CARRY)) {
-		if ((GET_OPCODE(op) == SLJIT_SUB) && (src2w != (-1L<<63))) {
-			op &= ~SLJIT_SUB;
-			op |= SLJIT_ADD;
-			src2w = -src2w;
-		}
-	}
-
 	if (is_commutative(op)) {
 		#define SWAP_ARGS \
 		do {                         \
@@ -1433,6 +1438,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	if (src1 & SLJIT_MEM) {
 		FAIL_IF(load_word(compiler, src1_r, src1, src1w, tmp1, op & SLJIT_I32_OP));
 	}
+
+	// need to specify signed or logical operation
+	int signed_flags = sets_signed_flag(op);
 
 	if (is_shift(op)) {
 		// handle shifts first, they have more constraints than other operations
@@ -1482,25 +1490,23 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	} else if ((src2 & SLJIT_IMM) && (src1_r == dst_r) && have_op_2_imm(op, src2w)) {
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		case SLJIT_ADD:
-			if (op & SLJIT_SET_CARRY) {
-				// carry if UNSIGNED overflow occurs
-				FAIL_IF(push_inst(compiler, algfi(dst_r, src2w)));
-			} else {
+			if (!HAS_FLAGS(op) || signed_flags) {
 				FAIL_IF(push_inst(compiler, is_s16(src2w) ?
 					aghi(dst_r, src2w) :
 					agfi(dst_r, src2w)
 				));
+			} else {
+				FAIL_IF(push_inst(compiler, algfi(dst_r, src2w)));
 			}
 			break;
 		case SLJIT_ADD32:
-			if (op & SLJIT_SET_CARRY) {
-				// carry if UNSIGNED overflow occurs
-				FAIL_IF(push_inst(compiler, alfi(dst_r, src2w)));
-			} else {
+			if (!HAS_FLAGS(op) || signed_flags) {
 				FAIL_IF(push_inst(compiler, is_s16(src2w) ?
 					ahi(dst_r, src2w) :
 					afi(dst_r, src2w)
 				));
+			} else {
+				FAIL_IF(push_inst(compiler, alfi(dst_r, src2w)));
 			}
 			break;
 		case SLJIT_MUL:
@@ -1538,25 +1544,28 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 
 		int can_u12 = is_u12(mem.offset) ? 1 : 0;
 		sljit_ins ins = 0;
-
-		// use logical ops (alg rather than ag) to ensure carry bit is set
-		// correctly if required
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		// 64-bit ops
 #define EVAL(op) op(dst_r, mem.offset, mem.index, mem.base)
-		case SLJIT_ADD:  ins = EVAL( alg); break;
+		case SLJIT_ADD:  ins = signed_flags ? EVAL(ag) : EVAL(alg); break;
+		case SLJIT_SUB:  ins = signed_flags ? EVAL(sg) : EVAL(slg); break;
 		case SLJIT_ADDC: ins = EVAL(alcg); break;
-		case SLJIT_SUB:  ins = EVAL( slg); break;
 		case SLJIT_SUBC: ins = EVAL(slbg); break;
 		case SLJIT_MUL:  ins = EVAL( msg); break;
 		case SLJIT_OR:   ins = EVAL(  og); break;
 		case SLJIT_XOR:  ins = EVAL(  xg); break;
 		case SLJIT_AND:  ins = EVAL(  ng); break;
 		// 32-bit ops
+		case SLJIT_ADD32: ins = signed_flags ?
+			(can_u12 ? EVAL( a) : EVAL( ay)) :
+			(can_u12 ? EVAL(al) : EVAL(aly));
+			break;
+		case SLJIT_SUB32: ins = signed_flags ?
+			(can_u12 ? EVAL( s) : EVAL( sy)) :
+			(can_u12 ? EVAL(sl) : EVAL(sly));
+			break;
 		case SLJIT_ADDC32: ins = EVAL(alc); break;
 		case SLJIT_SUBC32: ins = EVAL(slb); break;
-		case SLJIT_ADD32:  ins = can_u12 ? EVAL(al) : EVAL(aly); break;
-		case SLJIT_SUB32:  ins = can_u12 ? EVAL(sl) : EVAL(sly); break;
 		case SLJIT_MUL32:  ins = can_u12 ? EVAL(ms) : EVAL(msy); break;
 		case SLJIT_OR32:   ins = can_u12 ? EVAL( o) : EVAL( oy); break;
 		case SLJIT_XOR32:  ins = can_u12 ? EVAL( x) : EVAL( xy); break;
@@ -1583,22 +1592,32 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 			src1_r = tmp0;
 		}
 		sljit_ins ins = 0;
-		// use logical ops (algr rather than agr) to ensure carry bit is set
-		// correctly if required
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		// 64-bit ops
-		case SLJIT_ADD:  ins =  algr(src1_r, src2_r); break;
+		case SLJIT_ADD: ins = signed_flags ?
+			agr(src1_r, src2_r) :
+			algr(src1_r, src2_r);
+			break;
+		case SLJIT_SUB: ins = signed_flags ?
+			sgr(src1_r, src2_r) :
+			slgr(src1_r, src2_r);
+			break;
 		case SLJIT_ADDC: ins = alcgr(src1_r, src2_r); break;
-		case SLJIT_SUB:  ins =  slgr(src1_r, src2_r); break;
 		case SLJIT_SUBC: ins = slbgr(src1_r, src2_r); break;
 		case SLJIT_MUL:  ins =  msgr(src1_r, src2_r); break;
 		case SLJIT_AND:  ins =   ngr(src1_r, src2_r); break;
 		case SLJIT_OR:   ins =   ogr(src1_r, src2_r); break;
 		case SLJIT_XOR:  ins =   xgr(src1_r, src2_r); break;
 		// 32-bit ops
-		case SLJIT_ADD32:  ins =  alr(src1_r, src2_r); break;
+		case SLJIT_ADD32: ins = signed_flags ?
+			ar(src1_r, src2_r) :
+			alr(src1_r, src2_r);
+			break;
+		case SLJIT_SUB32: ins = signed_flags ?
+			sr(src1_r, src2_r) :
+			slr(src1_r, src2_r);
+			break;
 		case SLJIT_ADDC32: ins = alcr(src1_r, src2_r); break;
-		case SLJIT_SUB32:  ins =  slr(src1_r, src2_r); break;
 		case SLJIT_SUBC32: ins = slbr(src1_r, src2_r); break;
 		case SLJIT_MUL32:  ins =  msr(src1_r, src2_r); break;
 		case SLJIT_AND32:  ins =   nr(src1_r, src2_r); break;
