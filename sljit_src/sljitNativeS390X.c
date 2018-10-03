@@ -109,6 +109,12 @@ static int have_ldisp() { return 1; } // TODO(mundaym): make conditional
 // distinct-operands facility
 static int have_distop() { return 1; } // TODO(mundaym): make conditional
 
+// load/store-on-condition 1 facility
+static int have_lscond1() { return 1; } // TODO(mundaym): make conditional
+
+// load/store-on-condition 2 facility
+static int have_lscond2() { return 1; } // TODO(mundaym): make conditional
+
 #define CHECK_SIGNED(v, bitlen) \
 	((v) == (((v) << (sizeof(v)*8 - bitlen)) >> (sizeof(v)*8 - bitlen)))
 static int is_s16(sljit_sw d) { return CHECK_SIGNED(d, 16); }
@@ -699,21 +705,38 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_sw d, sljit_gp
 }
 
 // LOAD MULTIPLE
-SLJIT_S390X_RSYA(lmg,   0xeb0000000004, 1);
+SLJIT_S390X_RSYA(lmg,   0xeb0000000004, 1)
 
 // SHIFT LEFT LOGICAL
-SLJIT_S390X_RSYA(sllg,  0xeb000000000d, 1);
+SLJIT_S390X_RSYA(sllg,  0xeb000000000d, 1)
 
 // SHIFT RIGHT SINGLE
-SLJIT_S390X_RSYA(srag,  0xeb000000000a, 1);
+SLJIT_S390X_RSYA(srag,  0xeb000000000a, 1)
 
 // SHIFT RIGHT SINGLE LOGICAL
-SLJIT_S390X_RSYA(srlg,  0xeb000000000c, 1);
+SLJIT_S390X_RSYA(srlg,  0xeb000000000c, 1)
 
 // STORE MULTIPLE
-SLJIT_S390X_RSYA(stmg,  0xeb0000000024, 1);
+SLJIT_S390X_RSYA(stmg,  0xeb0000000024, 1)
 
 #undef SLJIT_S390X_RSYA
+
+// RIE-g instructions (require load/store-on-condition 2 facility)
+#define SLJIT_S390X_RIEG(name, pattern) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, sljit_sw imm, sljit_uw mask) \
+{ \
+	SLJIT_ASSERT(have_lscond2()); \
+	sljit_ins r1 = (sljit_ins)(reg&0xf) << 36; \
+	sljit_ins m3 = (sljit_ins)(mask&0xf) << 32; \
+	sljit_ins i2 = (sljit_ins)(imm&0xffffL) << 16; \
+	return pattern | r1 | m3 | i2; \
+}
+
+// LOAD HALFWORD IMMEDIATE ON CONDITION
+SLJIT_S390X_RIEG(lochi,  0xec0000000042)
+SLJIT_S390X_RIEG(locghi, 0xec0000000046)
+
+#undef SLJIT_S390X_RIEG
 
 SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 {
@@ -1119,16 +1142,11 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 	//ADJUST_LOCAL_OFFSET(dst, dstw);
 	//ADJUST_LOCAL_OFFSET(src, srcw);
 
-	if (dst == SLJIT_UNUSED && !HAS_FLAGS(op)) {
+	sljit_s32 opcode = GET_OPCODE(op);
+	if ((dst == SLJIT_UNUSED) && !HAS_FLAGS(op)) {
 		// TODO(mundaym): implement prefetch?
 		return SLJIT_SUCCESS;
 	}
-	if (dst == SLJIT_UNUSED || src == SLJIT_UNUSED) {
-		// TODO(mundaym): handle
-		abort();
-	}
-
-	sljit_s32 opcode = GET_OPCODE(op);
 	if (opcode >= SLJIT_MOV && opcode <= SLJIT_MOV_P) {
 		// LOAD REGISTER
 		if (FAST_IS_REG(dst) && FAST_IS_REG(src)) {
@@ -1220,7 +1238,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 
 	SLJIT_ASSERT((src & SLJIT_IMM) == 0); // no immediates
 
-	sljit_gpr dst_r = FAST_IS_REG(dst) ? gpr(REG_MASK & dst) : tmp0;
+	sljit_gpr dst_r = SLOW_IS_REG(dst) ? gpr(REG_MASK & dst) : tmp0;
 	sljit_gpr src_r = FAST_IS_REG(src) ? gpr(REG_MASK & src) : tmp0;
 	if (src & SLJIT_MEM) {
 		FAIL_IF(load_word(compiler, src_r, src, srcw, tmp1, src & SLJIT_I32_OP));
@@ -1274,7 +1292,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		SLJIT_UNREACHABLE();
 	}
 
-	if (dst & SLJIT_MEM) {
+	if ((dst != SLJIT_UNUSED) && (dst & SLJIT_MEM)) {
 		FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
 	}
 
@@ -1686,11 +1704,119 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_icall(struct sljit_compiler *compi
 	abort();
 }
 
+// map the given type to a 4-bit condition code mask
+static sljit_uw get_cc(sljit_s32 type) {
+	const sljit_uw eq = 1 << 3; // equal {,to zero}
+	const sljit_uw lt = 1 << 2; // less than {,zero}
+	const sljit_uw gt = 1 << 1; // greater than {,zero}
+	const sljit_uw ov = 1 << 0; // {overflow,NaN}
+	const sljit_uw mask = 0xf;
+
+	switch (type) {
+	case SLJIT_EQUAL:
+	case SLJIT_EQUAL_F64:
+		return mask & eq;
+
+	case SLJIT_NOT_EQUAL:
+	case SLJIT_NOT_EQUAL_F64:
+		return mask & ~eq;
+
+	case SLJIT_LESS:
+	case SLJIT_SIG_LESS:
+	case SLJIT_LESS_F64:
+		return mask & lt;
+
+	case SLJIT_LESS_EQUAL:
+	case SLJIT_SIG_LESS_EQUAL:
+	case SLJIT_LESS_EQUAL_F64:
+		return mask & (lt | eq);
+
+	case SLJIT_GREATER:
+	case SLJIT_SIG_GREATER:
+	case SLJIT_GREATER_F64:
+		return mask & gt;
+
+	case SLJIT_GREATER_EQUAL:
+	case SLJIT_SIG_GREATER_EQUAL:
+	case SLJIT_GREATER_EQUAL_F64:
+		return mask & (gt | eq);
+
+	case SLJIT_OVERFLOW:
+	case SLJIT_MUL_OVERFLOW:
+	case SLJIT_UNORDERED_F64:
+		return mask & ov;
+
+	case SLJIT_NOT_OVERFLOW:
+	case SLJIT_MUL_NOT_OVERFLOW:
+	case SLJIT_ORDERED_F64:
+		return mask & ~ov;
+	}
+	SLJIT_UNREACHABLE();
+}
+
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *compiler, sljit_s32 op,
 	sljit_s32 dst, sljit_sw dstw,
 	sljit_s32 type)
 {
-	abort();
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_op_flags(compiler, op, dst, dstw, type));
+
+	sljit_gpr dst_r = FAST_IS_REG(dst) ? gpr(dst & REG_MASK) : tmp0;
+	sljit_gpr loc_r = tmp1;
+	switch (GET_OPCODE(op)) {
+	case SLJIT_AND:
+	case SLJIT_OR:
+	case SLJIT_XOR:
+		// dst is also source operand
+		if (dst & SLJIT_MEM) {
+			FAIL_IF(load_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
+		}
+		break;
+	case SLJIT_MOV:
+		// can write straight into destination
+		loc_r = dst_r;
+		break;
+	default:
+		SLJIT_UNREACHABLE();
+	}
+
+	sljit_uw mask = get_cc(type);
+	// TODO(mundaym): fold into cmov helper function?
+	if (have_lscond2()) {
+		FAIL_IF(push_load_imm_inst(compiler, loc_r, 0));
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			lochi(loc_r, 1, mask) :
+			locghi(loc_r, 1, mask)));
+	} else {
+		// TODO(mundaym): no load/store-on-condition 2 facility (ipm? branch-and-set?)
+		abort();
+	}
+
+	// apply bitwise op and set condition codes
+	switch (GET_OPCODE(op)) {
+	case SLJIT_AND:
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			nr(dst_r, loc_r) :
+			ngr(dst_r, loc_r)));
+		break;
+	case SLJIT_OR:
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			or(dst_r, loc_r) :
+			ogr(dst_r, loc_r)));
+		break;
+	case SLJIT_XOR:
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			xr(dst_r, loc_r) :
+			xgr(dst_r, loc_r)));
+		break;
+	}
+
+	// store result to memory if required
+	if (dst & SLJIT_MEM) {
+		FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
+	}
+
+	return SLJIT_SUCCESS;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_cmov(struct sljit_compiler *compiler, sljit_s32 type,
