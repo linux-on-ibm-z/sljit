@@ -442,6 +442,9 @@ SLJIT_S390X_RXA(a,   0x5a000000)
 // ADD HALFWORD
 SLJIT_S390X_RXA(ah,  0x4a000000)
 
+// ADD LOGICAL
+SLJIT_S390X_RXA(al,  0x5e000000)
+
 // AND
 SLJIT_S390X_RXA(n,   0x54000000)
 
@@ -1314,7 +1317,10 @@ static int have_op_2_imm(sljit_s32 op, sljit_sw imm) {
 	switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 	case SLJIT_ADD32:
 	case SLJIT_ADD:
-		return have_eimm() || is_s16(imm);
+		if (op & SLJIT_SET_CARRY) {
+			return have_eimm() && is_u32(imm);
+		}
+		return have_eimm() ? is_s32(imm) : is_s16(imm);
 	case SLJIT_MUL32:
 	case SLJIT_MUL:
 		// TODO(mundaym): general extension check
@@ -1342,6 +1348,7 @@ static int have_op_2_imm(sljit_s32 op, sljit_sw imm) {
 	case SLJIT_SUBC:
 	case SLJIT_SUBC32:
 		// no SUBTRACT IMMEDIATE
+		// TODO(mundaym): SUBTRACT LOGICAL IMMEDIATE
 		return 0;
 	}
 	return 0;
@@ -1365,18 +1372,11 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	sljit_gpr dst_r = SLOW_IS_REG(dst) ? gpr(dst & REG_MASK) : tmp0;
 
 	// convert SUB(x, imm) to ADD(x, -imm)
-	if (src2 & SLJIT_IMM) {
-		switch (GET_OPCODE(op)) {
-		case SLJIT_SUB:
+	if ((src2 & SLJIT_IMM) && !(op & SLJIT_SET_CARRY)) {
+		if ((GET_OPCODE(op) == SLJIT_SUB) && (src2w != (-1L<<63))) {
 			op &= ~SLJIT_SUB;
 			op |= SLJIT_ADD;
 			src2w = -src2w;
-			break;
-		case SLJIT_SUBC:
-			op &= ~SLJIT_SUBC;
-			op |= SLJIT_ADDC;
-			src2w = -src2w;
-			break;
 		}
 	}
 
@@ -1464,16 +1464,26 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	} else if ((src2 & SLJIT_IMM) && (src1_r == dst_r) && have_op_2_imm(op, src2w)) {
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		case SLJIT_ADD:
-			FAIL_IF(push_inst(compiler, is_s16(src2w) ?
-				aghi(dst_r, src2w) :
-				agfi(dst_r, src2w)
-			));
+			if (op & SLJIT_SET_CARRY) {
+				// carry if UNSIGNED overflow occurs
+				FAIL_IF(push_inst(compiler, algfi(dst_r, src2w)));
+			} else {
+				FAIL_IF(push_inst(compiler, is_s16(src2w) ?
+					aghi(dst_r, src2w) :
+					agfi(dst_r, src2w)
+				));
+			}
 			break;
 		case SLJIT_ADD32:
-			FAIL_IF(push_inst(compiler, is_s16(src2w) ?
-				ahi(dst_r, src2w) :
-				afi(dst_r, src2w)
-			));
+			if (op & SLJIT_SET_CARRY) {
+				// carry if UNSIGNED overflow occurs
+				FAIL_IF(push_inst(compiler, alfi(dst_r, src2w)));
+			} else {
+				FAIL_IF(push_inst(compiler, is_s16(src2w) ?
+					ahi(dst_r, src2w) :
+					afi(dst_r, src2w)
+				));
+			}
 			break;
 		case SLJIT_MUL:
 			FAIL_IF(push_inst(compiler, mhi(dst_r, src2w)));
@@ -1507,40 +1517,37 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		} else {
 			FAIL_IF(make_addr_bxy(compiler, &mem, src2, src2w, tmp1));
 		}
+
 		int can_u12 = is_u12(mem.offset) ? 1 : 0;
+		sljit_ins ins = 0;
+
+		// use logical ops (alg rather than ag) to ensure carry bit is set
+		// correctly if required
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		// 64-bit ops
-#define INS(x) FAIL_IF(push_inst(compiler, x(dst_r, mem.offset, mem.index, mem.base))); break;
-		case SLJIT_ADD:  INS(ag)
-		case SLJIT_ADDC: INS(alcg)
-		case SLJIT_SUB:  INS(sg)
-		case SLJIT_SUBC: INS(slbg)
-		case SLJIT_MUL:  INS(msg)
-		case SLJIT_OR:   INS(og)
-		case SLJIT_XOR:  INS(xg)
-		case SLJIT_AND:  INS(ng)
-
+#define EVAL(op) op(dst_r, mem.offset, mem.index, mem.base)
+		case SLJIT_ADD:  ins = EVAL( alg); break;
+		case SLJIT_ADDC: ins = EVAL(alcg); break;
+		case SLJIT_SUB:  ins = EVAL( slg); break;
+		case SLJIT_SUBC: ins = EVAL(slbg); break;
+		case SLJIT_MUL:  ins = EVAL( msg); break;
+		case SLJIT_OR:   ins = EVAL(  og); break;
+		case SLJIT_XOR:  ins = EVAL(  xg); break;
+		case SLJIT_AND:  ins = EVAL(  ng); break;
 		// 32-bit ops
-		case SLJIT_ADDC32: INS(alc)
-		case SLJIT_SUBC32: INS(slb)
-#undef INS
-
-		// 32-bit ops
-#define INS(x12, x20) FAIL_IF(push_inst(compiler,         \
-	can_u12 ?                                         \
-	x12(dst_r, mem.offset, mem.index, mem.base) :  \
-	x20(dst_r, mem.offset, mem.index, mem.base))); \
-	break;
-		case SLJIT_ADD32:  INS(a,  ay)
-		case SLJIT_SUB32:  INS(s,  sg)
-		case SLJIT_MUL32:  INS(ms, msy)
-		case SLJIT_OR32:   INS(o,  oy)
-		case SLJIT_XOR32:  INS(x,  xy)
-		case SLJIT_AND32:  INS(n,  ny)
-#undef INS
+		case SLJIT_ADDC32: ins = EVAL(alc); break;
+		case SLJIT_SUBC32: ins = EVAL(slb); break;
+		case SLJIT_ADD32:  ins = can_u12 ? EVAL(al) : EVAL(aly); break;
+		case SLJIT_SUB32:  ins = can_u12 ? EVAL(sl) : EVAL(sly); break;
+		case SLJIT_MUL32:  ins = can_u12 ? EVAL(ms) : EVAL(msy); break;
+		case SLJIT_OR32:   ins = can_u12 ? EVAL( o) : EVAL( oy); break;
+		case SLJIT_XOR32:  ins = can_u12 ? EVAL( x) : EVAL( xy); break;
+		case SLJIT_AND32:  ins = can_u12 ? EVAL( n) : EVAL( ny); break;
+#undef EVAL
 		default:
 			SLJIT_UNREACHABLE();
 		}
+		FAIL_IF(push_inst(compiler, ins));
 	} else {
 		sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
 		if (src2 & SLJIT_IMM) {
@@ -1557,21 +1564,32 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 				lr(tmp0, src1_r) : lgr(tmp0, src1_r)));
 			src1_r = tmp0;
 		}
-		switch (GET_OPCODE(op)) {
-#define INS(x32, x64) FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ? \
-	x32(src1_r, src2_r) : x64(src1_r, src2_r))); break;
-		case SLJIT_ADD:  INS(ar,   agr)
-		case SLJIT_ADDC: INS(alcr, alcgr)
-		case SLJIT_SUB:  INS(sr,   sgr)
-		case SLJIT_SUBC: INS(slbr, slbgr)
-		case SLJIT_MUL:  INS(msr,  msgr)
-		case SLJIT_AND:  INS(nr,   ngr)
-		case SLJIT_OR:   INS(or,   ogr)
-		case SLJIT_XOR:  INS(xr,   xgr)
+		sljit_ins ins = 0;
+		// use logical ops (algr rather than agr) to ensure carry bit is set
+		// correctly if required
+		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
+		// 64-bit ops
+		case SLJIT_ADD:  ins =  algr(src1_r, src2_r); break;
+		case SLJIT_ADDC: ins = alcgr(src1_r, src2_r); break;
+		case SLJIT_SUB:  ins =  slgr(src1_r, src2_r); break;
+		case SLJIT_SUBC: ins = slbgr(src1_r, src2_r); break;
+		case SLJIT_MUL:  ins =  msgr(src1_r, src2_r); break;
+		case SLJIT_AND:  ins =   ngr(src1_r, src2_r); break;
+		case SLJIT_OR:   ins =   ogr(src1_r, src2_r); break;
+		case SLJIT_XOR:  ins =   xgr(src1_r, src2_r); break;
+		// 32-bit ops
+		case SLJIT_ADD32:  ins =  alr(src1_r, src2_r); break;
+		case SLJIT_ADDC32: ins = alcr(src1_r, src2_r); break;
+		case SLJIT_SUB32:  ins =  slr(src1_r, src2_r); break;
+		case SLJIT_SUBC32: ins = slbr(src1_r, src2_r); break;
+		case SLJIT_MUL32:  ins =  msr(src1_r, src2_r); break;
+		case SLJIT_AND32:  ins =   nr(src1_r, src2_r); break;
+		case SLJIT_OR32:   ins =   or(src1_r, src2_r); break;
+		case SLJIT_XOR32:  ins =   xr(src1_r, src2_r); break;
 		default:
 			SLJIT_UNREACHABLE();
 		}
-#undef INS
+		FAIL_IF(push_inst(compiler, ins));
 		if (src1_r != dst_r) {
 			FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
 				lr(dst_r, src1_r) : lgr(dst_r, src1_r)));
