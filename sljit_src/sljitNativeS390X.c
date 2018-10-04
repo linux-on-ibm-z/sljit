@@ -33,6 +33,13 @@ typedef sljit_uw sljit_ins; // instruction
 typedef sljit_uw sljit_gpr; // general purpose register [0-15]
 typedef sljit_uw sljit_fpr; // floating-point register [0-15]
 
+// instruction tags
+// The leftmost 2 bytes of an instruction are unused (s390x
+// instructions are 2-6 bytes in length). We can therefore use
+// these bytes to tag instructions to aid later processing.
+const sljit_ins sljit_ins_const = (sljit_ins)(1) << 48;
+const sljit_ins sljit_ins_jump  = (sljit_ins)(1) << 49;
+
 // general purpose registers
 const sljit_gpr r0 = 0; // 0 in address calculations; reserved
 const sljit_gpr r1 = 1; // reserved
@@ -56,6 +63,11 @@ const sljit_gpr tmp1 = 1; // r1
 
 static const sljit_gpr reg_map[SLJIT_NUMBER_OF_REGISTERS + 1] = {
 	2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15
+};
+
+struct sljit_s390x_const {
+	struct sljit_const const_; // must be first
+	sljit_sw init_value;       // required to build literal pool
 };
 
 static sljit_gpr gpr(sljit_s32 r)
@@ -105,6 +117,9 @@ static int have_eimm() { return 1; }  // TODO(mundaym): make conditional
 
 // long-displacement facility
 static int have_ldisp() { return 1; } // TODO(mundaym): make conditional
+
+// general-instruction-extension facility
+static int have_genext() { return 1; } // TODO(mundaym): make conditional 
 
 // distinct-operands facility
 static int have_distop() { return 1; } // TODO(mundaym): make conditional
@@ -738,6 +753,23 @@ SLJIT_S390X_RIEG(locghi, 0xec0000000046)
 
 #undef SLJIT_S390X_RIEG
 
+#define SLJIT_S390X_RILB(name, pattern, cond) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, sljit_sw ri) \
+{ \
+	SLJIT_ASSERT(cond); \
+	sljit_ins r1 = (sljit_ins)(reg&0xf) << 36; \
+	sljit_ins ri2 = (sljit_ins)(reg&0xffffffff); \
+	return pattern | r1 | ri2; \
+}
+
+// LOAD ADDRESS RELATIVE LONG
+SLJIT_S390X_RILB(larl, 0xc00000000000, 1);
+
+// LOAD RELATIVE LONG
+SLJIT_S390X_RILB(lgrl, 0xc40800000000, have_genext());
+
+#undef SLJIT_S390X_RILB
+
 SLJIT_S390X_INSTRUCTION(br, sljit_gpr target)
 {
 	return 0x07f0 | target;
@@ -920,20 +952,34 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 	//CHECK_PTR(check_sljit_generate_code(compiler));
 
 	// calculate the size of the code
-	sljit_uw ins_size = 0;
+	sljit_uw ins_size = 0;  // instructions
+	sljit_uw pool_size = 0; // literal pool
 	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
 		sljit_uw len = buf->used_size / sizeof(sljit_ins);
 		sljit_ins *ibuf = (sljit_ins *)buf->memory;
 		for (sljit_uw i = 0; i < len; ++i) {
 			// TODO(mundaym): labels, jumps, constants...
-			ins_size += sizeof_ins(ibuf[i]);
+			sljit_ins ins = ibuf[i];
+			if (ins & sljit_ins_const) {
+				pool_size += 8;
+				ins &= ~sljit_ins_const;
+			}
+			ins_size += sizeof_ins(ins);
 		}
 	}
 
+	// pad code size to 8 bytes
+	// the literal pool needs to be doubleword aligned
+	sljit_uw pad_size = (((ins_size)+7UL)&~7UL) - ins_size;
+	SLJIT_ASSERT(pad_size < 8UL);
+
 	// allocate target buffer
-	void *code = SLJIT_MALLOC_EXEC(ins_size);
+	void *code = SLJIT_MALLOC_EXEC(ins_size + pad_size + pool_size);
 	PTR_FAIL_WITH_EXEC_IF(code);
 	void *code_ptr = code;
+	sljit_uw *pool = (sljit_uw *)((sljit_uw)(code) + ins_size + pad_size);
+	sljit_uw *pool_ptr = pool;
+	struct sljit_s390x_const *const_ = (struct sljit_s390x_const *)compiler->consts;
 
 	// emit the code
 	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
@@ -941,10 +987,33 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 		sljit_ins *ibuf = (sljit_ins *)buf->memory;
 		for (sljit_uw i = 0; i < len; ++i) {
 			// TODO(mundaym): labels, jumps, constants...
-			encode_inst(&code_ptr, ibuf[i]);
+			sljit_ins ins = ibuf[i];
+			if (ins & sljit_ins_const) {
+				// clear the const tag
+				ins &= ~sljit_ins_const;
+
+				// update instruction with relative address of constant
+				sljit_uw pos = (sljit_uw)(code_ptr);
+				sljit_uw off = (sljit_uw)(pool_ptr) - pos;
+				SLJIT_ASSERT((off&1) == 0);
+				off >>= 1; // halfword (not byte) offset
+				SLJIT_ASSERT(is_s32(off));
+				ins |= (sljit_ins)(off&0xffffffff);
+
+				// update address
+				const_->const_.addr = (sljit_uw)pool_ptr;
+
+				// store initial value into pool and update pool address
+				*(pool_ptr++) = const_->init_value;
+
+				// move to next constant
+				const_ = (struct sljit_s390x_const *)const_->const_.next;
+			}
+			encode_inst(&code_ptr, ins);
 		}
 	}
 	SLJIT_ASSERT(code + ins_size == code_ptr);
+	SLJIT_ASSERT(((void *)(pool) + pool_size) == (void *)pool_ptr);
 
 	compiler->error = SLJIT_ERR_COMPILED;
 	compiler->executable_offset = SLJIT_EXEC_OFFSET(code);
@@ -1845,17 +1914,56 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_cmov(struct sljit_compiler *compil
 	abort();
 }
 
+/* --------------------------------------------------------------------- */
+/*  Other instructions                                                   */
+/* --------------------------------------------------------------------- */
+
+// On s390x we build a literal pool to hold constants. This has two main
+// advantages:
+//
+//   1. we only need one instruction in the instruction stream (LGRL)
+//   2. we don't need to worry about flushing the instruction cache
+//      when updating constants
+//
+// To retrofit the extra information needed to build the literal pool we
+// add a new sljit_s390x_const struct that contains the initial value but
+// can still be cast to a sljit_const.
+
 SLJIT_API_FUNC_ATTRIBUTE struct sljit_const* sljit_emit_const(struct sljit_compiler *compiler, sljit_s32 dst, sljit_sw dstw, sljit_sw init_value)
 {
-	abort();
-}
+	CHECK_ERROR_PTR();
+	CHECK_PTR(check_sljit_emit_const(compiler, dst, dstw, init_value));
 
-SLJIT_API_FUNC_ATTRIBUTE void sljit_set_jump_addr(sljit_uw addr, sljit_uw new_target, sljit_sw executable_offset)
-{
-	abort();
+	struct sljit_s390x_const *const_ =
+		(struct sljit_s390x_const*)ensure_abuf(compiler, sizeof(struct sljit_s390x_const));
+	PTR_FAIL_IF(!const_);
+	set_const((struct sljit_const*)const_, compiler);
+	const_->init_value = init_value;
+
+	sljit_gpr dst_r = FAST_IS_REG(dst) ? gpr(dst & REG_MASK) : tmp0;
+	if (have_genext()) {
+		PTR_FAIL_IF(push_inst(compiler, sljit_ins_const | lgrl(dst_r, 0)));
+	} else {
+		PTR_FAIL_IF(push_inst(compiler, sljit_ins_const | larl(tmp1, 0)));
+		PTR_FAIL_IF(push_inst(compiler, lg(dst_r, 0, r0, tmp1)));
+	}
+	if (dst & SLJIT_MEM) {
+		PTR_FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, 0 /* always 64-bit */));
+	}
+	return (struct sljit_const*)const_;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE void sljit_set_const(sljit_uw addr, sljit_sw new_constant, sljit_sw executable_offset)
+{
+	// update the constant pool
+	sljit_uw *ptr = (sljit_uw *)(SLJIT_ADD_EXEC_OFFSET((sljit_uw *)(addr), executable_offset));
+	*ptr = new_constant;
+	// No need to flush the instruction cache as we do not modify
+	// any executable code (the constant is fetched from the data
+	// data cache).
+}
+
+SLJIT_API_FUNC_ATTRIBUTE void sljit_set_jump_addr(sljit_uw addr, sljit_uw new_target, sljit_sw executable_offset)
 {
 	abort();
 }
