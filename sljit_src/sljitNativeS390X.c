@@ -1228,7 +1228,15 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_has_cpu_feature(sljit_s32 feature_type)
 {
-	abort();
+	// TODO(mundaym): implement all
+	switch (feature_type) {
+	case SLJIT_HAS_CLZ:
+		return have_eimm() ? 1 : 0; // FLOGR instruction
+	case SLJIT_HAS_FPU:
+	case SLJIT_HAS_CMOV:
+		return 0;
+	}
+	return 0;
 }
 
 /* --------------------------------------------------------------------- */
