@@ -1046,6 +1046,11 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 			}
 			ins_size += sizeof_ins(ins);
 		}
+		// emit trailing label
+		if (label && label->size == j) {
+			label->size = ins_size;
+			label = label->next;
+		}
 	}
 	SLJIT_ASSERT(label == NULL);
 	SLJIT_ASSERT(jump == NULL);
@@ -1295,8 +1300,14 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 
 	FAIL_IF(push_inst(compiler, stmg(r6, r15, 48, r15))); // save registers TODO(MGM): optimize
 	if (frame_size != 0) {
-		SLJIT_ASSERT(frame_size < ((1<<15) - 1));
-		FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)frame_size))));
+		if (is_s16(-frame_size)) {
+			FAIL_IF(push_inst(compiler, aghi(r15, -((sljit_s16)frame_size))));
+		} else if (is_s32(-frame_size)) {
+			FAIL_IF(push_inst(compiler, agfi(r15, -((sljit_s32)frame_size))));
+		} else {
+			FAIL_IF(push_load_imm_inst(compiler, tmp1, -frame_size));
+			FAIL_IF(push_inst(compiler, la(r15, 0, tmp1, r15)));
+		}
 	}
 
 	args = get_arg_count(arg_types);
@@ -1328,7 +1339,15 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *comp
 
 	FAIL_IF(emit_mov_before_return(compiler, op, src, srcw));
 
-	FAIL_IF(push_inst(compiler, lmg(r6, r15, 160 + compiler->local_size + 48, r15))); // restore registers TODO(MGM): optimize
+	sljit_sw size = compiler->local_size + 160 + 48;
+	sljit_gpr end = r15;
+	if (!is_s20(size)) {
+		FAIL_IF(push_load_imm_inst(compiler, tmp1, compiler->local_size + 160));
+		FAIL_IF(push_inst(compiler, la(r15, 0, tmp1, r15)));
+		size = 48;
+		end = r14; // r15 has been restored already
+	}
+	FAIL_IF(push_inst(compiler, lmg(r6, end, size, r15))); // restore registers TODO(MGM): optimize
 	FAIL_IF(push_inst(compiler, br(r14))); // return
 
 	return SLJIT_SUCCESS;
@@ -1352,9 +1371,8 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_op1(compiler, op, dst, dstw, src, srcw));
-	//TODO(mundaym): re-enable
-	//ADJUST_LOCAL_OFFSET(dst, dstw);
-	//ADJUST_LOCAL_OFFSET(src, srcw);
+	ADJUST_LOCAL_OFFSET(dst, dstw);
+	ADJUST_LOCAL_OFFSET(src, srcw);
 
 	sljit_s32 opcode = GET_OPCODE(op);
 	if ((dst == SLJIT_UNUSED) && !HAS_FLAGS(op)) {
@@ -1626,10 +1644,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 {
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_op2(compiler, op, dst, dstw, src1, src1w, src2, src2w));
-	//TODO(mundaym): implement
-	//ADJUST_LOCAL_OFFSET(dst, dstw);
-	//ADJUST_LOCAL_OFFSET(src1, src1w);
-	//ADJUST_LOCAL_OFFSET(src2, src2w);
+	ADJUST_LOCAL_OFFSET(dst, dstw);
+	ADJUST_LOCAL_OFFSET(src1, src1w);
+	ADJUST_LOCAL_OFFSET(src2, src2w);
 
 	if (dst == SLJIT_UNUSED && !HAS_FLAGS(op))
 		return SLJIT_SUCCESS;
@@ -1674,6 +1691,71 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 
 	// need to specify signed or logical operation
 	int signed_flags = sets_signed_flag(op);
+
+	// TODO(mundaym): emulate zero flag? emulate carry?
+	//SLJIT_ASSERT(!((op & SLJIT_SET_Z) && (op & SLJIT_SET_CARRY)));
+
+	// emit comparison for subtract with unused result
+	if (dst == SLJIT_UNUSED && GET_OPCODE(op) == SLJIT_SUB) {
+		sljit_sw cmp = 0;
+		switch (GET_FLAG_TYPE(op)) {
+		case SLJIT_LESS:
+		case SLJIT_LESS_EQUAL:
+		case SLJIT_GREATER:
+		case SLJIT_GREATER_EQUAL:
+			cmp = 1; /* unsigned */
+			break;
+		case SLJIT_EQUAL:
+		case SLJIT_SIG_LESS:
+		case SLJIT_SIG_LESS_EQUAL:
+		case SLJIT_SIG_GREATER:
+		case SLJIT_SIG_GREATER_EQUAL:
+			cmp = -1; /* signed */
+			break;
+		}
+		if (cmp != 0) {
+			sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
+			if (src2 & SLJIT_IMM) {
+				if (cmp > 0 && is_u32(src2w)) {
+					// unsigned
+					return push_inst(compiler, (op & SLJIT_I32_OP) ?
+						clfi(src1_r, src2w) :
+						clgfi(src1_r, src2w));
+				} else if (cmp < 0 && is_s16(src2w)) {
+					// signed
+					return push_inst(compiler, (op & SLJIT_I32_OP) ?
+						chi(src1_r, src2w) :
+						cghi(src1_r, src2w));
+				} else if (cmp < 0 && is_s32(src2w)) {
+					// signed
+					return push_inst(compiler, (op & SLJIT_I32_OP) ?
+						cfi(src1_r, src2w) :
+						cgfi(src1_r, src2w));
+				}
+				FAIL_IF(push_load_imm_inst(compiler, src2_r, src2w));
+			}
+			if (src2 & SLJIT_MEM) {
+				// TODO(mundaym): comparisons with memory
+				// load src2 into register
+				FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
+			}
+			if (cmp > 0) {
+				// unsigned
+				return push_inst(compiler, (op & SLJIT_I32_OP) ?
+					clr(src1_r, src2_r) :
+					clgr(src1_r, src2_r));
+			}
+			if (cmp < 0) {
+				// signed
+				return push_inst(compiler, (op & SLJIT_I32_OP) ?
+					cr(src1_r, src2_r) :
+					cgr(src1_r, src2_r));
+			}
+		}
+	}
+
+	// TODO(mundaym): emulate unsigned flags?
+	//SLJIT_ASSERT(!((op & SLJIT_SET_Z) && !signed_flags));
 
 	if (is_shift(op)) {
 		// handle shifts first, they have more constraints than other operations
