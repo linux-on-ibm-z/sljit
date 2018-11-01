@@ -1376,23 +1376,36 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			sljit_gpr reg = gpr(dst);
 			struct addr mem;
 			FAIL_IF(make_addr_bxy(compiler, &mem, src, srcw, tmp1));
-			switch (opcode) {
-			case SLJIT_MOV_U8:
-			case SLJIT_MOV_S8:
-				abort(); // TODO(mundaym): implement
-			case SLJIT_MOV_U16:
-			case SLJIT_MOV_S16:
-				abort(); // TODO(mundaym): implement
-			case SLJIT_MOV_U32:
-			case SLJIT_MOV_S32:
-				abort(); // TODO(mundaym): implement
+			sljit_ins ins;
+			switch (opcode | (op & SLJIT_I32_OP)) {
+			case SLJIT_MOV32_U8:  ins = llc(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV32_S8:  ins =  lb(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV32_U16: ins = llh(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV32_S16:
+				ins = is_u12(mem.offset) ?
+					lh(reg, mem.offset, mem.index, mem.base) :
+					lhy(reg, mem.offset, mem.index, mem.base);
+				break;
+			case (SLJIT_MOV_P | SLJIT_I32_OP):
+			case (SLJIT_MOV | SLJIT_I32_OP):;
+				ins = is_u12(mem.offset) ?
+					l(reg, mem.offset, mem.index, mem.base) :
+					ly(reg, mem.offset, mem.index, mem.base);
+				break;
+			case SLJIT_MOV_U8:  ins = llgc(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV_S8:  ins =  lgb(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV_U16: ins = llgh(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV_S16: ins =  lgh(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV_U32: ins = llgf(reg, mem.offset, mem.index, mem.base); break;
+			case SLJIT_MOV_S32: ins =  lgf(reg, mem.offset, mem.index, mem.base); break;
 			case SLJIT_MOV_P:
 			case SLJIT_MOV:
-				return push_inst(compiler,
-					lg(reg, mem.offset, mem.index, mem.base));
+				ins = lg(reg, mem.offset, mem.index, mem.base);
+				break;
 			default:
 				SLJIT_UNREACHABLE();
 			}
+			return push_inst(compiler, ins);
 		}
 		// STORE and STORE IMMEDIATE
 		if ((dst & SLJIT_MEM) &&
@@ -1407,13 +1420,19 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			switch (opcode) {
 			case SLJIT_MOV_U8:
 			case SLJIT_MOV_S8:
-				abort(); // TODO(mundaym): implement
+				return push_inst(compiler, is_u12(mem.offset) ?
+					stc(reg, mem.offset, mem.index, mem.base) :
+					stcy(reg, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_U16:
 			case SLJIT_MOV_S16:
-				abort(); // TODO(mundaym): implement
+				return push_inst(compiler, is_u12(mem.offset) ?
+					sth(reg, mem.offset, mem.index, mem.base) :
+					sthy(reg, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_U32:
 			case SLJIT_MOV_S32:
-				abort(); // TODO(mundaym): implement
+				return push_inst(compiler, is_u12(mem.offset) ?
+					st(reg, mem.offset, mem.index, mem.base) :
+					sty(reg, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_P:
 			case SLJIT_MOV:
 				return push_inst(compiler,
@@ -2055,7 +2074,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *co
 		SLJIT_UNREACHABLE();
 	}
 
-	sljit_uw mask = get_cc(type);
+	sljit_uw mask = get_cc(type & 0xff);
 	// TODO(mundaym): fold into cmov helper function?
 	if (have_lscond2()) {
 		FAIL_IF(push_load_imm_inst(compiler, loc_r, 0));
