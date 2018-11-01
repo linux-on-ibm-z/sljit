@@ -1007,8 +1007,8 @@ static sljit_s32 store_word(struct sljit_compiler *compiler, sljit_gpr src,
 SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compiler)
 {
 	CHECK_ERROR_PTR();
-	// TODO(mundaym): re-enable checks
-	//CHECK_PTR(check_sljit_generate_code(compiler));
+	CHECK_PTR(check_sljit_generate_code(compiler));
+	reverse_buf(compiler);
 
 	// branch handling
 	struct sljit_label *label = compiler->labels;
@@ -1017,21 +1017,22 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 	// calculate the size of the code
 	sljit_uw ins_size = 0;  // instructions
 	sljit_uw pool_size = 0; // literal pool
+	sljit_uw j = 0;
 	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
 		sljit_uw len = buf->used_size / sizeof(sljit_ins);
 		sljit_ins *ibuf = (sljit_ins *)buf->memory;
-		for (sljit_uw i = 0; i < len; ++i) {
+		for (sljit_uw i = 0; i < len; ++i, ++j) {
 			// TODO(mundaym): labels, jumps, constants...
 			sljit_ins ins = ibuf[i];
 			if (ins & sljit_ins_const) {
 				pool_size += 8;
 				ins &= ~sljit_ins_const;
 			}
-			if (label && label->size == i) {
+			if (label && label->size == j) {
 				label->size = ins_size;
 				label = label->next;
 			}
-			if (jump && jump->addr == i) {
+			if (jump && jump->addr == j) {
 				if ((jump->flags & SLJIT_REWRITABLE_JUMP) || (jump->flags & JUMP_ADDR)) {
 					// encoded:
 					//   brasl %r14, <rel_addr> (or brcl <mask>, <rel_addr>)
@@ -1073,10 +1074,11 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 	jump = compiler->jumps;
 
 	// emit the code
+	j = 0;
 	for (struct sljit_memory_fragment *buf = compiler->buf; buf != NULL; buf = buf->next) {
 		sljit_uw len = buf->used_size / sizeof(sljit_ins);
 		sljit_ins *ibuf = (sljit_ins *)buf->memory;
-		for (sljit_uw i = 0; i < len; ++i) {
+		for (sljit_uw i = 0; i < len; ++i, ++j) {
 			// TODO(mundaym): labels, jumps, constants...
 			sljit_ins ins = ibuf[i];
 			if (ins & sljit_ins_const) {
@@ -1100,14 +1102,12 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 				// move to next constant
 				const_ = (struct sljit_s390x_const *)const_->const_.next;
 			}
-			if (jump && jump->addr == i) {
+			if (jump && jump->addr == j) {
 				sljit_sw target = (jump->flags & JUMP_LABEL) ? jump->u.label->addr : jump->u.target;
 				if ((jump->flags & SLJIT_REWRITABLE_JUMP) || (jump->flags & JUMP_ADDR)) {
 					jump->addr = (sljit_uw)pool_ptr;
 
 					// load address into tmp1
-					fprintf(stderr, "code_ptr=0x%lx\n", (sljit_uw)(code_ptr));
-					fprintf(stderr, "pool_ptr=0x%lx\n", (sljit_uw)(pool_ptr));
 					sljit_uw pos = (sljit_uw)(code_ptr);
 					sljit_uw off = (sljit_uw)(pool_ptr) - pos;
 					SLJIT_ASSERT((off&1) == 0);
@@ -1156,7 +1156,6 @@ SLJIT_API_FUNC_ATTRIBUTE void* sljit_generate_code(struct sljit_compiler *compil
 	compiler->error = SLJIT_ERR_COMPILED;
 	compiler->executable_offset = SLJIT_EXEC_OFFSET(code);
 	compiler->executable_size = ins_size;
-
 	code = SLJIT_ADD_EXEC_OFFSET(code, executable_offset);
 	code_ptr = SLJIT_ADD_EXEC_OFFSET(code_ptr, executable_offset);
 	SLJIT_CACHE_FLUSH(code, code_ptr);
@@ -1292,12 +1291,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 
 	// saved registers go in callee allocated save area
 	compiler->local_size = (local_size+0xf)&~0xf;
-	sljit_sw frame_size = compiler->local_size;
-
-	// create register save area if we will be making calls
-	if (compiler->have_save_area) {
-		frame_size += 160;
-	}
+	sljit_sw frame_size = compiler->local_size + 160;
 
 	FAIL_IF(push_inst(compiler, stmg(r6, r15, 48, r15))); // save registers TODO(MGM): optimize
 	if (frame_size != 0) {
@@ -1306,7 +1300,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 	}
 
 	args = get_arg_count(arg_types);
-
 	if (args >= 1)
 		FAIL_IF(push_inst(compiler, lgr(gpr(SLJIT_S0), gpr(SLJIT_R0))));
 	if (args >= 2)
@@ -1335,7 +1328,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *comp
 
 	FAIL_IF(emit_mov_before_return(compiler, op, src, srcw));
 
-	FAIL_IF(push_inst(compiler, lmg(r6, r15, 48 + compiler->local_size, r15))); // restore registers TODO(MGM): optimize
+	FAIL_IF(push_inst(compiler, lmg(r6, r15, 160 + compiler->local_size + 48, r15))); // restore registers TODO(MGM): optimize
 	FAIL_IF(push_inst(compiler, br(r14))); // return
 
 	return SLJIT_SUCCESS;
@@ -1708,6 +1701,34 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		if (workaround_alias && dst_r != src1_r) {
 			FAIL_IF(push_inst(compiler, lr(dst_r, src1_r)));
 		}
+	} else if ((GET_OPCODE(op) == SLJIT_SUB) && (op & SLJIT_SET_Z) && !signed_flags) {
+		// subtract logical instructions do not set the right flags unfortunately
+		// instead, negate src2 and issue an add logical
+		// TODO(mundaym): distinct operand facility where needed
+		if (src1_r != dst_r && src1_r != tmp0) {
+			FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+				lr(tmp0, src1_r) : lgr(tmp0, src1_r)));
+			src1_r = tmp0;
+		}
+		sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
+		if (src2 & SLJIT_IMM) {
+			// load src2 into register
+			FAIL_IF(push_load_imm_inst(compiler, src2_r, src2w));
+		}
+		if (src2 & SLJIT_MEM) {
+			// load src2 into register
+			FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
+		}
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			lcr(tmp1, src2_r) :
+			lcgr(tmp1, src2_r)));
+		FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+			alr(src1_r, tmp1) :
+			algr(src1_r, tmp1)));
+		if (src1_r != dst_r) {
+			FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+				lr(dst_r, src1_r) : lgr(dst_r, src1_r)));
+		}
 	} else if ((src2 & SLJIT_IMM) && (src1_r == dst_r) && have_op_2_imm(op, src2w)) {
 		switch (GET_OPCODE(op) | (op & SLJIT_I32_OP)) {
 		case SLJIT_ADD:
@@ -1967,7 +1988,6 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_call(struct sljit_compile
 	compiler->skip_checks = 1;
 #endif
 
-	compiler->have_save_area = 1;
 	return sljit_emit_jump(compiler, type);
 }
 
@@ -2006,7 +2026,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_icall(struct sljit_compiler *compi
 	compiler->skip_checks = 1;
 #endif
 
-	compiler->have_save_area = 1;
 	return sljit_emit_ijump(compiler, type, src, srcw);
 }
 
