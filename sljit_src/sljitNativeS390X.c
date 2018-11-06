@@ -915,7 +915,6 @@ static sljit_s32 make_addr_bxy(
 		index = tmp;
 		off = 0; // clear offset
 	}
-	SLJIT_ASSERT(base == r0 || base != index);
 	*addr = (struct addr) {
 		.base = base,
 		.index = index,
@@ -951,7 +950,6 @@ static sljit_s32 make_addr_bx(
 		index = tmp;
 		off = 0; // clear offset
 	}
-	SLJIT_ASSERT(base == r0 || base != index);
 	*addr = (struct addr) {
 		.base = base,
 		.index = index,
@@ -1326,7 +1324,15 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_set_context(struct sljit_compiler *comp
 	sljit_s32 options, sljit_s32 arg_types, sljit_s32 scratches, sljit_s32 saveds,
 	sljit_s32 fscratches, sljit_s32 fsaveds, sljit_s32 local_size)
 {
-	abort();
+	sljit_s32 saved_regs_size;
+
+	CHECK_ERROR();
+	CHECK(check_sljit_set_context(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size));
+	set_set_context(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size);
+
+	// TODO(mundaym): stack space for saved floating point registers
+	compiler->local_size = (local_size + 0xf) & ~0xf;
+	return SLJIT_SUCCESS;
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *compiler, sljit_s32 op, sljit_s32 src, sljit_sw srcw)
@@ -1382,8 +1388,31 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 	if (opcode >= SLJIT_MOV && opcode <= SLJIT_MOV_P) {
 		// LOAD REGISTER
 		if (FAST_IS_REG(dst) && FAST_IS_REG(src)) {
-			// TODO(mundaym): sign/zero extension
-			return push_inst(compiler, lgr(gpr(dst), gpr(src)));
+			sljit_ins ins = 0;
+			sljit_gpr dst_r = gpr(dst);
+			sljit_gpr src_r = gpr(src);
+			switch (opcode | (op & SLJIT_I32_OP)) {
+			// 32-bit
+			case SLJIT_MOV32_U8:  ins = llcr(dst_r, src_r); break;
+			case SLJIT_MOV32_S8:  ins =  lbr(dst_r, src_r); break;
+			case SLJIT_MOV32_U16: ins = llhr(dst_r, src_r); break;
+			case SLJIT_MOV32_S16: ins =  lhr(dst_r, src_r); break;
+			case SLJIT_MOV32:     ins =   lr(dst_r, src_r); break;
+			// 64-bit
+			case SLJIT_MOV_U8:  ins = llgcr(dst_r, src_r); break;
+			case SLJIT_MOV_S8:  ins =  lgbr(dst_r, src_r); break;
+			case SLJIT_MOV_U16: ins = llghr(dst_r, src_r); break;
+			case SLJIT_MOV_S16: ins =  lghr(dst_r, src_r); break;
+			case SLJIT_MOV_U32: ins = llgfr(dst_r, src_r); break;
+			case SLJIT_MOV_S32: ins =  lgfr(dst_r, src_r); break;
+			case SLJIT_MOV_P:
+			case SLJIT_MOV:
+				ins = lgr(dst_r, src_r);
+				break;
+			default:
+				SLJIT_UNREACHABLE();
+			}
+			return push_inst(compiler, ins);
 		}
 		// LOAD IMMEDIATE
 		if (FAST_IS_REG(dst) && (src & SLJIT_IMM)) {
@@ -1404,8 +1433,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 					lh(reg, mem.offset, mem.index, mem.base) :
 					lhy(reg, mem.offset, mem.index, mem.base);
 				break;
-			case (SLJIT_MOV_P | SLJIT_I32_OP):
-			case (SLJIT_MOV | SLJIT_I32_OP):;
+			case SLJIT_MOV32:
 				ins = is_u12(mem.offset) ?
 					l(reg, mem.offset, mem.index, mem.base) :
 					ly(reg, mem.offset, mem.index, mem.base);
@@ -1466,13 +1494,25 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			switch (opcode) {
 			case SLJIT_MOV_U8:
 			case SLJIT_MOV_S8:
-				abort(); // TODO(mundaym): implement
+				FAIL_IF(push_inst(compiler,
+					llgc(tmp0, mem.offset, mem.index, mem.base)));
+				FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
+				return push_inst(compiler,
+					stcy(tmp0, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_U16:
 			case SLJIT_MOV_S16:
-				abort(); // TODO(mundaym): implement
+				FAIL_IF(push_inst(compiler,
+					llgh(tmp0, mem.offset, mem.index, mem.base)));
+				FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
+				return push_inst(compiler,
+					sthy(tmp0, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_U32:
 			case SLJIT_MOV_S32:
-				abort(); // TODO(mundaym): implement
+				FAIL_IF(push_inst(compiler,
+					ly(tmp0, mem.offset, mem.index, mem.base)));
+				FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
+				return push_inst(compiler,
+					sty(tmp0, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_P:
 			case SLJIT_MOV:
 				FAIL_IF(push_inst(compiler,
