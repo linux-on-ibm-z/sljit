@@ -1365,7 +1365,26 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *comp
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op0(struct sljit_compiler *compiler, sljit_s32 op)
 {
-	abort();
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_op0(compiler, op));
+
+	op = GET_OPCODE(op);
+	switch (op) {
+	case SLJIT_BREAKPOINT:
+		// TODO(mundaym): insert real breakpoint?
+	case SLJIT_NOP:
+		return push_inst(compiler, 0x0700 /* 2-byte nop */);
+	case SLJIT_LMUL_UW:
+	case SLJIT_LMUL_SW:
+		abort();
+	case SLJIT_DIVMOD_UW:
+	case SLJIT_DIVMOD_SW:
+		abort();
+	case SLJIT_DIV_UW:
+	case SLJIT_DIV_SW:
+		abort();
+	}
+	SLJIT_UNREACHABLE();
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compiler, sljit_s32 op,
