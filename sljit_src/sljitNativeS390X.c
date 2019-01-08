@@ -54,11 +54,19 @@ const sljit_gpr r10 = 10;
 const sljit_gpr r11 = 11;
 const sljit_gpr r12 = 12;
 const sljit_gpr r13 = 13;
-const sljit_gpr r14 = 14; // return address
+const sljit_gpr r14 = 14; // return address and flag register
 const sljit_gpr r15 = 15; // stack pointer
 
 const sljit_gpr tmp0 = 0; // r0
 const sljit_gpr tmp1 = 1; // r1
+
+// Flag register layout:
+//
+// 0               32  33  34      36      64
+// +---------------+---+---+-------+-------+
+// |      ZERO     | 0 | 0 |  C C  |///////|
+// +---------------+---+---+-------+-------+
+const sljit_gpr flag_r = 14; // r14
 
 static const sljit_gpr reg_map[SLJIT_NUMBER_OF_REGISTERS + 1] = {
 	2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15
@@ -461,6 +469,9 @@ SLJIT_S390X_RILA(nilf,  0xc00b00000000, sljit_u32)
 SLJIT_S390X_RILA(cfi,   0xc20d00000000, sljit_s32)
 SLJIT_S390X_RILA(cgfi,  0xc20c00000000, sljit_s32)
 
+// COMPARE IMMEDIATE HIGH
+SLJIT_S390X_RILA(cih,   0xcc0d00000000, sljit_s32) // TODO(mundaym): high-word facility?
+
 // COMPARE LOGICAL IMMEDIATE
 SLJIT_S390X_RILA(clfi,  0xc20f00000000, sljit_u32)
 SLJIT_S390X_RILA(clgfi, 0xc20e00000000, sljit_u32)
@@ -785,6 +796,40 @@ SLJIT_S390X_RSYA(stmg,  0xeb0000000024, 1)
 
 #undef SLJIT_S390X_RSYA
 
+// RIE-f instructions (require general-instructions-extension facility)
+#define SLJIT_S390X_RIEF(name, pattern) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_u8 start, sljit_u8 end, sljit_u8 rot) \
+{ \
+	SLJIT_ASSERT(have_genext()); \
+	sljit_ins r1 = (sljit_ins)(dst&0xf) << 36; \
+	sljit_ins r2 = (sljit_ins)(src&0xf) << 32; \
+	sljit_ins i3 = (sljit_ins)(start) << 24; \
+	sljit_ins i4 = (sljit_ins)(end) << 16; \
+	sljit_ins i5 = (sljit_ins)(rot) << 8; \
+	return pattern | r1 | r2 | i3 | i4 | i5; \
+}
+
+// ROTATE THEN AND SELECTED BITS
+SLJIT_S390X_RIEF(rnsbg,  0xec0000000054)
+
+// ROTATE THEN EXCLUSIVE OR SELECTED BITS
+SLJIT_S390X_RIEF(rxsbg,  0xec0000000057)
+
+// ROTATE THEN OR SELECTED BITS
+SLJIT_S390X_RIEF(rosbg,  0xec0000000056)
+
+// ROTATE THEN INSERT SELECTED BITS
+SLJIT_S390X_RIEF(risbg,  0xec0000000055)
+SLJIT_S390X_RIEF(risbgn, 0xec0000000059)
+
+// ROTATE THEN INSERT SELECTED BITS HIGH
+SLJIT_S390X_RIEF(risbhg, 0xec000000005d)
+
+// ROTATE THEN INSERT SELECTED BITS LOW
+SLJIT_S390X_RIEF(risblg, 0xec0000000051)
+
+#undef SLJIT_S390X_RIEF
+
 // RIE-g instructions (require load/store-on-condition 2 facility)
 #define SLJIT_S390X_RIEG(name, pattern) \
 SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, sljit_sw imm, sljit_uw mask) \
@@ -842,7 +887,34 @@ SLJIT_S390X_INSTRUCTION(flogr, sljit_gpr dst, sljit_gpr src)
 	return 0xb9830000 | r1 | r2;
 }
 
+// INSERT PROGRAM MASK
+SLJIT_S390X_INSTRUCTION(ipm, sljit_gpr dst)
+{
+	return 0xb2220000 | ((sljit_ins)(dst&0xf) << 4);
+}
+
+// ROTATE THEN INSERT SELECTED BITS HIGH (ZERO)
+SLJIT_S390X_INSTRUCTION(risbhgz, sljit_gpr dst, sljit_gpr src, sljit_u8 start, sljit_u8 end, sljit_u8 rot)
+{
+	return risbhg(dst, src, start, 0x8 | end, rot);
+}
+
 #undef SLJIT_S390X_INSTRUCTION
+
+// load condition code as needed to match type
+static sljit_s32 push_load_cc(struct sljit_compiler *compiler, sljit_s32 type)
+{
+	switch (type) {
+	case SLJIT_ZERO:
+	case SLJIT_NOT_ZERO:
+		FAIL_IF(push_inst(compiler, cih(flag_r, 0)));
+		break;
+	default:
+		FAIL_IF(push_inst(compiler, tmlh(flag_r, 0x0300)));
+		break;
+	}
+	return SLJIT_SUCCESS;
+}
 
 // load 64-bit immediate into register without clobbering flags
 static sljit_s32 push_load_imm_inst(struct sljit_compiler *compiler, sljit_gpr target, sljit_sw v)
@@ -1751,71 +1823,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	// need to specify signed or logical operation
 	int signed_flags = sets_signed_flag(op);
 
-	// TODO(mundaym): emulate zero flag? emulate carry?
-	//SLJIT_ASSERT(!((op & SLJIT_SET_Z) && (op & SLJIT_SET_CARRY)));
-
-	// emit comparison for subtract with unused result
-	if (dst == SLJIT_UNUSED && GET_OPCODE(op) == SLJIT_SUB) {
-		sljit_sw cmp = 0;
-		switch (GET_FLAG_TYPE(op)) {
-		case SLJIT_LESS:
-		case SLJIT_LESS_EQUAL:
-		case SLJIT_GREATER:
-		case SLJIT_GREATER_EQUAL:
-			cmp = 1; /* unsigned */
-			break;
-		case SLJIT_EQUAL:
-		case SLJIT_SIG_LESS:
-		case SLJIT_SIG_LESS_EQUAL:
-		case SLJIT_SIG_GREATER:
-		case SLJIT_SIG_GREATER_EQUAL:
-			cmp = -1; /* signed */
-			break;
-		}
-		if (cmp != 0) {
-			sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
-			if (src2 & SLJIT_IMM) {
-				if (cmp > 0 && is_u32(src2w)) {
-					// unsigned
-					return push_inst(compiler, (op & SLJIT_I32_OP) ?
-						clfi(src1_r, src2w) :
-						clgfi(src1_r, src2w));
-				} else if (cmp < 0 && is_s16(src2w)) {
-					// signed
-					return push_inst(compiler, (op & SLJIT_I32_OP) ?
-						chi(src1_r, src2w) :
-						cghi(src1_r, src2w));
-				} else if (cmp < 0 && is_s32(src2w)) {
-					// signed
-					return push_inst(compiler, (op & SLJIT_I32_OP) ?
-						cfi(src1_r, src2w) :
-						cgfi(src1_r, src2w));
-				}
-				FAIL_IF(push_load_imm_inst(compiler, src2_r, src2w));
-			}
-			if (src2 & SLJIT_MEM) {
-				// TODO(mundaym): comparisons with memory
-				// load src2 into register
-				FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
-			}
-			if (cmp > 0) {
-				// unsigned
-				return push_inst(compiler, (op & SLJIT_I32_OP) ?
-					clr(src1_r, src2_r) :
-					clgr(src1_r, src2_r));
-			}
-			if (cmp < 0) {
-				// signed
-				return push_inst(compiler, (op & SLJIT_I32_OP) ?
-					cr(src1_r, src2_r) :
-					cgr(src1_r, src2_r));
-			}
-		}
-	}
-
-	// TODO(mundaym): emulate unsigned flags?
-	//SLJIT_ASSERT(!((op & SLJIT_SET_Z) && !signed_flags));
-
 	if (is_shift(op)) {
 		// handle shifts first, they have more constraints than other operations
 		sljit_sw d = 0;
@@ -2035,6 +2042,21 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		}
 	}
 
+	// write condition code to emulated flag register
+	if (op & VARIABLE_FLAG_MASK) {
+		FAIL_IF(push_inst(compiler, ipm(flag_r)));
+	}
+
+	// write zero flag to emulated flag register
+	if (op & SLJIT_SET_Z) {
+		// insert low 32-bits into high 32-bits of flag register
+		FAIL_IF(push_inst(compiler, risbhgz(flag_r, dst_r, 0, 31, 32)));
+		if (!(op & SLJIT_I32_OP)) {
+			// OR high 32-bits with high 32-bits of flag register
+			FAIL_IF(push_inst(compiler, rosbg(flag_r, dst_r, 0, 31, 0)));
+		}
+	}
+
 	// finally write the result to memory if required
 	if (dst & SLJIT_MEM) {
 		SLJIT_ASSERT(dst_r != tmp1);
@@ -2118,6 +2140,12 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_jump(struct sljit_compile
 	CHECK_ERROR_PTR();
 	CHECK_PTR(check_sljit_emit_jump(compiler, type));
 
+	// reload condition code
+	sljit_uw mask = (type < SLJIT_JUMP) ? get_cc(type&0xff) : 0xf;
+	if (mask != 0xf) {
+		PTR_FAIL_IF(push_load_cc(compiler, type&0xff));
+	}
+
 	// record jump
 	struct sljit_jump *jump = (struct sljit_jump *)
 		ensure_abuf(compiler, sizeof(struct sljit_jump));
@@ -2127,7 +2155,6 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_jump(struct sljit_compile
 
 	// emit jump instruction
 	type &= 0xff;
-	sljit_uw mask = (type < SLJIT_JUMP) ? get_cc(type) : 0xf;
 	if (type >= SLJIT_FAST_CALL) {
 		PTR_FAIL_IF(push_inst(compiler, brasl(r14, 0)));
 	} else {
@@ -2216,6 +2243,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *co
 	}
 
 	sljit_uw mask = get_cc(type & 0xff);
+	if (mask != 0xf) {
+		FAIL_IF(push_load_cc(compiler, type));
+	}
 	// TODO(mundaym): fold into cmov helper function?
 	if (have_lscond2()) {
 		FAIL_IF(push_load_imm_inst(compiler, loc_r, 0));
