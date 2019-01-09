@@ -2548,6 +2548,11 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *co
 		break;
 	}
 
+	// set zero flag if needed
+	if (op & SLJIT_SET_Z) {
+		FAIL_IF(push_store_zero_flag(compiler, op, dst_r));
+	}
+
 	// store result to memory if required
 	if (dst & SLJIT_MEM) {
 		FAIL_IF(store_word(compiler, dst_r, dst, dstw, tmp1, op & SLJIT_I32_OP));
