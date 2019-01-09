@@ -910,8 +910,19 @@ static sljit_s32 push_load_cc(struct sljit_compiler *compiler, sljit_s32 type)
 		FAIL_IF(push_inst(compiler, cih(flag_r, 0)));
 		break;
 	default:
-		FAIL_IF(push_inst(compiler, tmlh(flag_r, 0x0300)));
+		FAIL_IF(push_inst(compiler, tmlh(flag_r, 0x3000)));
 		break;
+	}
+	return SLJIT_SUCCESS;
+}
+
+static sljit_s32 push_store_zero_flag(struct sljit_compiler *compiler, sljit_s32 op, sljit_gpr source)
+{
+	// insert low 32-bits into high 32-bits of flag register
+	FAIL_IF(push_inst(compiler, risbhgz(flag_r, source, 0, 31, 32)));
+	if (!(op & SLJIT_I32_OP)) {
+		// OR high 32-bits with high 32-bits of flag register
+		FAIL_IF(push_inst(compiler, rosbg(flag_r, source, 0, 31, 0)));
 	}
 	return SLJIT_SUCCESS;
 }
@@ -1496,14 +1507,20 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			case SLJIT_MOV_S16: ins =  lghr(dst_r, src_r); break;
 			case SLJIT_MOV_U32: ins = llgfr(dst_r, src_r); break;
 			case SLJIT_MOV_S32: ins =  lgfr(dst_r, src_r); break;
-			case SLJIT_MOV_P:
 			case SLJIT_MOV:
+			case SLJIT_MOV_P:
 				ins = lgr(dst_r, src_r);
 				break;
 			default:
 				SLJIT_UNREACHABLE();
 			}
-			return push_inst(compiler, ins);
+			FAIL_IF(push_inst(compiler, ins));
+			if (HAS_FLAGS(op)) {
+				// only handle zero flag
+				SLJIT_ASSERT(!(op & VARIABLE_FLAG_MASK));
+				FAIL_IF(push_store_zero_flag(compiler, op, dst_r));
+			}
+			return SLJIT_SUCCESS;
 		}
 		// LOAD IMMEDIATE
 		if (FAST_IS_REG(dst) && (src & SLJIT_IMM)) {
@@ -1542,7 +1559,13 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 			default:
 				SLJIT_UNREACHABLE();
 			}
-			return push_inst(compiler, ins);
+			FAIL_IF(push_inst(compiler, ins));
+			if (HAS_FLAGS(op)) {
+				// only handle zero flag
+				SLJIT_ASSERT(!(op & VARIABLE_FLAG_MASK));
+				FAIL_IF(push_store_zero_flag(compiler, op, reg));
+			}
+			return SLJIT_SUCCESS;
 		}
 		// STORE and STORE IMMEDIATE
 		if ((dst & SLJIT_MEM) &&
@@ -1572,8 +1595,14 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 					sty(reg, mem.offset, mem.index, mem.base));
 			case SLJIT_MOV_P:
 			case SLJIT_MOV:
-				return push_inst(compiler,
-					stg(reg, mem.offset, mem.index, mem.base));
+				FAIL_IF(push_inst(compiler,
+					stg(reg, mem.offset, mem.index, mem.base)));
+				if (HAS_FLAGS(op)) {
+					// only handle zero flag
+					SLJIT_ASSERT(!(op & VARIABLE_FLAG_MASK));
+					FAIL_IF(push_store_zero_flag(compiler, op, reg));
+				}
+				return SLJIT_SUCCESS;
 			default:
 				SLJIT_UNREACHABLE();
 			}
@@ -1609,8 +1638,14 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 				FAIL_IF(push_inst(compiler,
 					lg(tmp0, mem.offset, mem.index, mem.base)));
 				FAIL_IF(make_addr_bxy(compiler, &mem, dst, dstw, tmp1));
-				return push_inst(compiler,
-					stg(tmp0, mem.offset, mem.index, mem.base));
+				FAIL_IF(push_inst(compiler,
+					stg(tmp0, mem.offset, mem.index, mem.base)));
+				if (HAS_FLAGS(op)) {
+					// only handle zero flag
+					SLJIT_ASSERT(!(op & VARIABLE_FLAG_MASK));
+					FAIL_IF(push_store_zero_flag(compiler, op, tmp0));
+				}
+				return SLJIT_SUCCESS;
 			default:
 				SLJIT_UNREACHABLE();
 			}
@@ -1672,6 +1707,16 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		break;
 	default:
 		SLJIT_UNREACHABLE();
+	}
+
+	// write condition code to emulated flag register
+	if (op & VARIABLE_FLAG_MASK) {
+		FAIL_IF(push_inst(compiler, ipm(flag_r)));
+	}
+
+	// write zero flag to emulated flag register
+	if (op & SLJIT_SET_Z) {
+		FAIL_IF(push_store_zero_flag(compiler, op, dst_r));
 	}
 
 	if ((dst != SLJIT_UNUSED) && (dst & SLJIT_MEM)) {
@@ -1818,6 +1863,85 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 	}
 	if (src1 & SLJIT_MEM) {
 		FAIL_IF(load_word(compiler, src1_r, src1, src1w, tmp1, op & SLJIT_I32_OP));
+	}
+
+	// emit comparison before subtract
+	if (GET_OPCODE(op) == SLJIT_SUB && (op & VARIABLE_FLAG_MASK)) {
+		sljit_sw cmp = 0;
+		switch (GET_FLAG_TYPE(op)) {
+		case SLJIT_LESS:
+		case SLJIT_LESS_EQUAL:
+		case SLJIT_GREATER:
+		case SLJIT_GREATER_EQUAL:
+			cmp = 1; /* unsigned */
+			break;
+		case SLJIT_EQUAL:
+		case SLJIT_SIG_LESS:
+		case SLJIT_SIG_LESS_EQUAL:
+		case SLJIT_SIG_GREATER:
+		case SLJIT_SIG_GREATER_EQUAL:
+			cmp = -1; /* signed */
+			break;
+		}
+		// clear flags - no need to generate now
+		op &= ~VARIABLE_FLAG_MASK;
+		if (cmp != 0) {
+			sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
+			if (src2 & SLJIT_IMM) {
+				if (cmp > 0 && is_u32(src2w)) {
+					// unsigned
+					FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+						clfi(src1_r, src2w) :
+						clgfi(src1_r, src2w)));
+				} else if (cmp < 0 && is_s16(src2w)) {
+					// signed
+					FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+						chi(src1_r, src2w) :
+						cghi(src1_r, src2w)));
+				} else if (cmp < 0 && is_s32(src2w)) {
+					// signed
+					FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+						cfi(src1_r, src2w) :
+						cgfi(src1_r, src2w)));
+				} else {
+					FAIL_IF(push_load_imm_inst(compiler, src2_r, src2w));
+					if (cmp > 0) {
+						// unsigned
+						FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+							clr(src1_r, src2_r) :
+							clgr(src1_r, src2_r)));
+					}
+					if (cmp < 0) {
+						// signed
+						FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+							cr(src1_r, src2_r) :
+							cgr(src1_r, src2_r)));
+					}
+				}
+			} else {
+				if (src2 & SLJIT_MEM) {
+					// TODO(mundaym): comparisons with memory
+					// load src2 into register
+					FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
+				}
+				if (cmp > 0) {
+					// unsigned
+					FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+						clr(src1_r, src2_r) :
+						clgr(src1_r, src2_r)));
+				}
+				if (cmp < 0) {
+					// signed
+					FAIL_IF(push_inst(compiler, (op & SLJIT_I32_OP) ?
+						cr(src1_r, src2_r) :
+						cgr(src1_r, src2_r)));
+				}
+			}
+			FAIL_IF(push_inst(compiler, ipm(flag_r)));
+			if (dst == SLJIT_UNUSED) {
+				return SLJIT_SUCCESS;
+			}
+		}
 	}
 
 	// need to specify signed or logical operation
@@ -2049,12 +2173,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 
 	// write zero flag to emulated flag register
 	if (op & SLJIT_SET_Z) {
-		// insert low 32-bits into high 32-bits of flag register
-		FAIL_IF(push_inst(compiler, risbhgz(flag_r, dst_r, 0, 31, 32)));
-		if (!(op & SLJIT_I32_OP)) {
-			// OR high 32-bits with high 32-bits of flag register
-			FAIL_IF(push_inst(compiler, rosbg(flag_r, dst_r, 0, 31, 0)));
-		}
+		FAIL_IF(push_store_zero_flag(compiler, op, dst_r));
 	}
 
 	// finally write the result to memory if required
