@@ -2271,12 +2271,29 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fop2(struct sljit_compiler *compil
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fast_enter(struct sljit_compiler *compiler, sljit_s32 dst, sljit_sw dstw)
 {
-	abort();
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_fast_enter(compiler, dst, dstw));
+	ADJUST_LOCAL_OFFSET(dst, dstw);
+
+	if (FAST_IS_REG(dst))
+		return push_inst(compiler, lgr(gpr(dst), r14));
+
+	// memory
+	return store_word(compiler, r14, dst, dstw, tmp1, 0);
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fast_return(struct sljit_compiler *compiler, sljit_s32 src, sljit_sw srcw)
 {
-	abort();
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_fast_return(compiler, src, srcw));
+	ADJUST_LOCAL_OFFSET(src, srcw);
+
+	sljit_gpr src_r = FAST_IS_REG(src) ? gpr(src) : tmp1;
+	if (src & SLJIT_MEM) {
+	       FAIL_IF(load_word(compiler, tmp1, src, srcw, tmp1, 0));
+	}
+
+	return push_inst(compiler, br(src_r));
 }
 
 /* --------------------------------------------------------------------- */
