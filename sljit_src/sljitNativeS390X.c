@@ -2507,6 +2507,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *co
 		}
 		break;
 	case SLJIT_MOV:
+	case (SLJIT_MOV32 & ~SLJIT_I32_OP):
 		// can write straight into destination
 		loc_r = dst_r;
 		break;
@@ -2565,7 +2566,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_cmov(struct sljit_compiler *compil
 	sljit_s32 dst_reg,
 	sljit_s32 src, sljit_sw srcw)
 {
-	abort();
+	return SLJIT_ERR_UNSUPPORTED;
 }
 
 /* --------------------------------------------------------------------- */
