@@ -904,6 +904,7 @@ SLJIT_S390X_INSTRUCTION(risbhgz, sljit_gpr dst, sljit_gpr src, sljit_u8 start, s
 // load condition code as needed to match type
 static sljit_s32 push_load_cc(struct sljit_compiler *compiler, sljit_s32 type)
 {
+	type &= ~SLJIT_I32_OP;
 	switch (type) {
 	case SLJIT_ZERO:
 	case SLJIT_NOT_ZERO:
@@ -1883,9 +1884,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 			cmp = -1; /* signed */
 			break;
 		}
-		// clear flags - no need to generate now
-		op &= ~VARIABLE_FLAG_MASK;
 		if (cmp != 0) {
+			// clear flags - no need to generate now
+			op &= ~VARIABLE_FLAG_MASK;
 			sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
 			if (src2 & SLJIT_IMM) {
 				if (cmp > 0 && is_u32(src2w)) {
@@ -2260,7 +2261,7 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_jump(struct sljit_compile
 	CHECK_PTR(check_sljit_emit_jump(compiler, type));
 
 	// reload condition code
-	sljit_uw mask = (type < SLJIT_JUMP) ? get_cc(type&0xff) : 0xf;
+	sljit_uw mask = ((type&0xff) < SLJIT_JUMP) ? get_cc(type&0xff) : 0xf;
 	if (mask != 0xf) {
 		PTR_FAIL_IF(push_load_cc(compiler, type&0xff));
 	}
