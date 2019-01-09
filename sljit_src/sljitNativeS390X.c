@@ -1525,6 +1525,14 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		}
 		// LOAD IMMEDIATE
 		if (FAST_IS_REG(dst) && (src & SLJIT_IMM)) {
+			switch (opcode) {
+			case SLJIT_MOV_U8:  srcw = (sljit_sw)((sljit_u8)(srcw));  break;
+			case SLJIT_MOV_S8:  srcw = (sljit_sw)((sljit_s8)(srcw));  break;
+			case SLJIT_MOV_U16: srcw = (sljit_sw)((sljit_u16)(srcw)); break;
+			case SLJIT_MOV_S16: srcw = (sljit_sw)((sljit_s16)(srcw)); break;
+			case SLJIT_MOV_U32: srcw = (sljit_sw)((sljit_u32)(srcw)); break;
+			case SLJIT_MOV_S32: srcw = (sljit_sw)((sljit_s32)(srcw)); break;
+			}
 			return push_load_imm_inst(compiler, gpr(dst), srcw);
 		}
 		// LOAD
