@@ -1455,23 +1455,78 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op0(struct sljit_compiler *compile
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_op0(compiler, op));
 
-	op = GET_OPCODE(op);
+	sljit_gpr arg0 = gpr(SLJIT_R0);
+	sljit_gpr arg1 = gpr(SLJIT_R1);
+
+	op = GET_OPCODE(op) | (op & SLJIT_I32_OP);
 	switch (op) {
 	case SLJIT_BREAKPOINT:
 		// TODO(mundaym): insert real breakpoint?
 	case SLJIT_NOP:
 		return push_inst(compiler, 0x0700 /* 2-byte nop */);
 	case SLJIT_LMUL_UW:
+		FAIL_IF(push_inst(compiler, mlgr(arg0, arg0)));
+		break;
 	case SLJIT_LMUL_SW:
-		abort();
-	case SLJIT_DIVMOD_UW:
-	case SLJIT_DIVMOD_SW:
-		abort();
+		// signed multiplication from:
+		// Hacker's Delight, Second Edition: Chapter 8-3.
+		FAIL_IF(push_inst(compiler, srag(tmp0, arg0, 63, 0)));
+		FAIL_IF(push_inst(compiler, srag(tmp1, arg1, 63, 0)));
+		FAIL_IF(push_inst(compiler, ngr(tmp0, arg1)));
+		FAIL_IF(push_inst(compiler, ngr(tmp1, arg0)));
+
+		// unsigned multiplication
+		FAIL_IF(push_inst(compiler, mlgr(arg0, arg0)));
+
+		FAIL_IF(push_inst(compiler, sgr(arg0, tmp0)));
+		FAIL_IF(push_inst(compiler, sgr(arg0, tmp1)));
+		break;
+	case SLJIT_DIV_U32:
+	case SLJIT_DIVMOD_U32:
+		FAIL_IF(push_inst(compiler, lhi(tmp0, 0)));
+		FAIL_IF(push_inst(compiler, lr(tmp1, arg0)));
+		FAIL_IF(push_inst(compiler, dlr(tmp0, arg1)));
+		FAIL_IF(push_inst(compiler, lr(arg0, tmp1))); // quotient
+		if (op == SLJIT_DIVMOD_U32) {
+			FAIL_IF(push_inst(compiler, lr(arg1, tmp0))); // remainder
+		}
+		return SLJIT_SUCCESS;
+	case SLJIT_DIV_S32:
+	case SLJIT_DIVMOD_S32:
+		FAIL_IF(push_inst(compiler, lhi(tmp0, 0)));
+		FAIL_IF(push_inst(compiler, lr(tmp1, arg0)));
+		FAIL_IF(push_inst(compiler, dr(tmp0, arg1)));
+		FAIL_IF(push_inst(compiler, lr(arg0, tmp1))); // quotient
+		if (op == SLJIT_DIVMOD_S32) {
+			FAIL_IF(push_inst(compiler, lr(arg1, tmp0))); // remainder
+		}
+		return SLJIT_SUCCESS;
 	case SLJIT_DIV_UW:
+	case SLJIT_DIVMOD_UW:
+		FAIL_IF(push_inst(compiler, lghi(tmp0, 0)));
+		FAIL_IF(push_inst(compiler, lgr(tmp1, arg0)));
+		FAIL_IF(push_inst(compiler, dlgr(tmp0, arg1)));
+		FAIL_IF(push_inst(compiler, lgr(arg0, tmp1))); // quotient
+		if (op == SLJIT_DIVMOD_UW) {
+			FAIL_IF(push_inst(compiler, lgr(arg1, tmp0))); // remainder
+		}
+		return SLJIT_SUCCESS;
 	case SLJIT_DIV_SW:
-		abort();
+	case SLJIT_DIVMOD_SW:
+		FAIL_IF(push_inst(compiler, lgr(tmp1, arg0)));
+		FAIL_IF(push_inst(compiler, dsgr(tmp0, arg1)));
+		FAIL_IF(push_inst(compiler, lgr(arg0, tmp1))); // quotient
+		if (op == SLJIT_DIVMOD_SW) {
+			FAIL_IF(push_inst(compiler, lgr(arg1, tmp0))); // remainder
+		}
+		return SLJIT_SUCCESS;
+	default:
+		SLJIT_UNREACHABLE();
 	}
-	SLJIT_UNREACHABLE();
+	// swap result registers
+	FAIL_IF(push_inst(compiler, lgr(tmp0, arg0)));
+	FAIL_IF(push_inst(compiler, lgr(arg0, arg1)));
+	return push_inst(compiler, lgr(arg1, tmp0));
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compiler, sljit_s32 op,
