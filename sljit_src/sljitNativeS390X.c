@@ -2238,7 +2238,8 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_get_register_index(sljit_s32 reg)
 {
-	abort();
+	CHECK_REG_INDEX(check_sljit_get_register_index(reg));
+	return gpr(reg);
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_get_float_register_index(sljit_s32 reg)
@@ -2249,7 +2250,34 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_get_float_register_index(sljit_s32 reg)
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_custom(struct sljit_compiler *compiler,
 	void *instruction, sljit_s32 size)
 {
-	abort();
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_op_custom(compiler, instruction, size));
+
+	sljit_u8 *src = (sljit_u8*)instruction;
+	sljit_ins ins = 0;
+	switch (size) {
+	case 2:
+		ins |= (sljit_ins)(src[0]) << 8;
+		ins |= (sljit_ins)(src[1]);
+		break;
+	case 4:
+		ins |= (sljit_ins)(src[0]) << 24;
+		ins |= (sljit_ins)(src[1]) << 16;
+		ins |= (sljit_ins)(src[2]) << 8;
+		ins |= (sljit_ins)(src[3]);
+		break;
+	case 6:
+		ins |= (sljit_ins)(src[0]) << 40;
+		ins |= (sljit_ins)(src[1]) << 32;
+		ins |= (sljit_ins)(src[2]) << 24;
+		ins |= (sljit_ins)(src[3]) << 16;
+		ins |= (sljit_ins)(src[4]) << 8;
+		ins |= (sljit_ins)(src[5]);
+		break;
+	default:
+		return SLJIT_ERR_UNSUPPORTED;
+	}
+	return push_inst(compiler, ins);
 }
 
 /* --------------------------------------------------------------------- */

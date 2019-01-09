@@ -3661,6 +3661,8 @@ static void test41(void)
 #elif (defined SLJIT_CONFIG_X86_64 && SLJIT_CONFIG_X86_64)
 	sljit_u8 inst[16];
 	sljit_s32 reg;
+#elif (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
+	sljit_u8 inst[6];
 #else
 	sljit_u32 inst;
 #endif
@@ -3754,6 +3756,21 @@ static void test41(void)
 		| (sljit_get_register_index(SLJIT_S0) << 14)
 		| sljit_get_register_index(SLJIT_S1);
 	sljit_emit_op_custom(compiler, &inst, sizeof(sljit_u32));
+#elif (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
+	/* agr S0, S1 */
+	inst[0] = 0xb9;
+	inst[1] = 0x08;
+	inst[2] = 0;
+	inst[3] = (sljit_get_register_index(SLJIT_S0) << 4)
+		| sljit_get_register_index(SLJIT_S1);
+	sljit_emit_op_custom(compiler, &inst, 4);
+	/* lgr r2, S0 */
+	inst[0] = 0xb9;
+	inst[1] = 0x04;
+	inst[2] = 0;
+	inst[3] = (sljit_get_register_index(SLJIT_RETURN_REG) << 4)
+		| sljit_get_register_index(SLJIT_S0);
+	sljit_emit_op_custom(compiler, &inst, 4);
 #else
 	inst = 0;
 	sljit_emit_op_custom(compiler, &inst, 0);

@@ -1315,6 +1315,8 @@ static SLJIT_INLINE CHECK_RETURN_TYPE check_sljit_emit_op_custom(struct sljit_co
 #elif (defined SLJIT_CONFIG_ARM_THUMB2 && SLJIT_CONFIG_ARM_THUMB2)
 	CHECK_ARGUMENT((size == 2 && (((sljit_sw)instruction) & 0x1) == 0)
 		|| (size == 4 && (((sljit_sw)instruction) & 0x3) == 0));
+#elif (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
+	CHECK_ARGUMENT(size == 2 || size == 4 || size == 6);
 #else
 	CHECK_ARGUMENT(size == 4 && (((sljit_sw)instruction) & 0x3) == 0);
 #endif
