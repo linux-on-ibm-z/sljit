@@ -457,6 +457,9 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, imm_type imm) \
 SLJIT_S390X_RILA(afi,   0xc20900000000, sljit_s32)
 SLJIT_S390X_RILA(agfi,  0xc20800000000, sljit_s32)
 
+// ADD IMMEDIATE HIGH
+SLJIT_S390X_RILA(aih,   0xcc0800000000, sljit_s32) // TODO(mundaym): high-word facility?
+
 // ADD LOGICAL IMMEDIATE
 SLJIT_S390X_RILA(alfi,  0xc20b00000000, sljit_u32)
 SLJIT_S390X_RILA(algfi, 0xc20a00000000, sljit_u32)
@@ -1793,7 +1796,10 @@ static int have_op_2_imm(sljit_s32 op, sljit_sw imm) {
 	case SLJIT_MUL:
 		// TODO(mundaym): general extension check
 		// for ms{,g}fi
-		return is_s16(imm);
+		if (op & VARIABLE_FLAG_MASK) {
+			return 0;
+		}
+		return have_genext() && is_s16(imm);
 	case SLJIT_OR32:
 	case SLJIT_XOR32:
 	case SLJIT_AND32:
@@ -2000,6 +2006,36 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		}
 		if (workaround_alias && dst_r != src1_r) {
 			FAIL_IF(push_inst(compiler, lr(dst_r, src1_r)));
+		}
+	} else if ((GET_OPCODE(op) == SLJIT_MUL) && HAS_FLAGS(op)) {
+		// multiply instructions do not generally set flags so we need to manually
+		// detect overflow conditions
+		// TODO(mundaym): 64-bit overflow
+		// TODO(mundaym): z14 MSRKC and MSGKRC instructions would be much better for this
+		SLJIT_ASSERT(GET_FLAG_TYPE(op) == SLJIT_MUL_OVERFLOW ||
+		             GET_FLAG_TYPE(op) == SLJIT_MUL_NOT_OVERFLOW);
+		sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
+		if (src2 & SLJIT_IMM) {
+			// load src2 into register
+			FAIL_IF(push_load_imm_inst(compiler, src2_r, src2w));
+		}
+		if (src2 & SLJIT_MEM) {
+			// load src2 into register
+			FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
+		}
+		if (op & SLJIT_I32_OP) {
+			op &= ~VARIABLE_FLAG_MASK;
+			FAIL_IF(push_inst(compiler, lgfr(tmp0, src1_r)));
+			FAIL_IF(push_inst(compiler, msgfr(tmp0, src2_r)));
+			if (dst_r != tmp0) {
+				FAIL_IF(push_inst(compiler, lr(dst_r, tmp0)));
+			}
+			FAIL_IF(push_inst(compiler, aih(tmp0, 1)));
+			FAIL_IF(push_inst(compiler, nihf(tmp0, ~1U)));
+			FAIL_IF(push_inst(compiler, ipm(flag_r)));
+			FAIL_IF(push_inst(compiler, oilh(flag_r, 0x2000)));
+		} else {
+			return SLJIT_ERR_UNSUPPORTED;
 		}
 	} else if ((GET_OPCODE(op) == SLJIT_SUB) && (op & SLJIT_SET_Z) && !signed_flags) {
 		// subtract logical instructions do not set the right flags unfortunately
