@@ -1703,7 +1703,10 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		break;
 	case SLJIT_CLZ:
 		if (have_eimm()) {
-			FAIL_IF(push_inst(compiler, flogr(dst_r, src_r)));
+			FAIL_IF(push_inst(compiler, flogr(tmp0, src_r))); // clobbers tmp1
+			if (dst_r != tmp0) {
+				FAIL_IF(push_inst(compiler, lgr(dst_r, tmp0)));
+			}
 		} else {
 			abort(); // TODO(mundaym): no eimm (?)
 		}
@@ -1712,7 +1715,10 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
 		if (have_eimm()) {
 			FAIL_IF(push_inst(compiler, sllg(tmp1, src_r, 32, 0)));
 			FAIL_IF(push_inst(compiler, iilf(tmp1, 0xffffffff)));
-			FAIL_IF(push_inst(compiler, flogr(dst_r, src_r)));
+			FAIL_IF(push_inst(compiler, flogr(tmp0, tmp1))); // clobbers tmp1
+			if (dst_r != tmp0) {
+				FAIL_IF(push_inst(compiler, lr(dst_r, tmp0)));
+			}
 		} else {
 			abort(); // TODO(mundaym): no eimm (?)
 		}
