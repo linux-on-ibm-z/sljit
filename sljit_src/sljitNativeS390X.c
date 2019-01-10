@@ -60,6 +60,12 @@ const sljit_gpr r15 = 15; // stack pointer
 const sljit_gpr tmp0 = 0; // r0
 const sljit_gpr tmp1 = 1; // r1
 
+// Link registers. The normal link register is r14, but since
+// we use that for flags we need to use r1 instead to do fast
+// calls so that flags are preserved.
+const sljit_gpr link_r = 14;
+const sljit_gpr fast_link_r = 0;
+
 // Flag register layout:
 //
 // 0               32  33  34      36      64
@@ -2031,10 +2037,11 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 				}
 			}
 			FAIL_IF(push_inst(compiler, ipm(flag_r)));
-			if (dst == SLJIT_UNUSED) {
-				return SLJIT_SUCCESS;
-			}
 		}
+	}
+
+	if (!HAS_FLAGS(op) && dst == SLJIT_UNUSED) {
+		return SLJIT_SUCCESS;
 	}
 
 	// need to specify signed or logical operation
@@ -2384,10 +2391,10 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fast_enter(struct sljit_compiler *
 	ADJUST_LOCAL_OFFSET(dst, dstw);
 
 	if (FAST_IS_REG(dst))
-		return push_inst(compiler, lgr(gpr(dst), r14));
+		return push_inst(compiler, lgr(gpr(dst), fast_link_r));
 
 	// memory
-	return store_word(compiler, r14, dst, dstw, tmp1, 0);
+	return store_word(compiler, fast_link_r, dst, dstw, tmp1, 0);
 }
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_fast_return(struct sljit_compiler *compiler, sljit_s32 src, sljit_sw srcw)
@@ -2445,7 +2452,7 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_jump(struct sljit_compile
 	// emit jump instruction
 	type &= 0xff;
 	if (type >= SLJIT_FAST_CALL) {
-		PTR_FAIL_IF(push_inst(compiler, brasl(r14, 0)));
+		PTR_FAIL_IF(push_inst(compiler, brasl(type == SLJIT_FAST_CALL ? fast_link_r : link_r, 0)));
 	} else {
 		PTR_FAIL_IF(push_inst(compiler, brcl(mask, 0)));
 	}
@@ -2485,7 +2492,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_ijump(struct sljit_compiler *compi
 
 	// emit jump instruction
 	if (type >= SLJIT_FAST_CALL) {
-		return push_inst(compiler, basr(r14, src_r));
+		return push_inst(compiler, basr(type == SLJIT_FAST_CALL ? fast_link_r : link_r, src_r));
 	}
 	return push_inst(compiler, br(src_r));
 }
