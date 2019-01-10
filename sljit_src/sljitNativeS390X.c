@@ -833,6 +833,23 @@ SLJIT_S390X_RIEF(risblg, 0xec0000000051)
 
 #undef SLJIT_S390X_RIEF
 
+// RRF-c instructions (require load/store-on-condition 1 facility)
+#define SLJIT_S390X_RRFC(name, pattern) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_uw mask) \
+{ \
+	SLJIT_ASSERT(have_lscond2()); \
+	sljit_ins r1 = (sljit_ins)(dst&0xf) << 4; \
+	sljit_ins r2 = (sljit_ins)(src&0xf); \
+	sljit_ins m3 = (sljit_ins)(mask&0xf) << 12; \
+	return pattern | m3 | r1 | r2; \
+}
+
+// LOAD HALFWORD IMMEDIATE ON CONDITION
+SLJIT_S390X_RRFC(locr,  0xb9f20000)
+SLJIT_S390X_RRFC(locgr, 0xb9e20000)
+
+#undef SLJIT_S390X_RRFC
+
 // RIE-g instructions (require load/store-on-condition 2 facility)
 #define SLJIT_S390X_RIEG(name, pattern) \
 SLJIT_S390X_INSTRUCTION(name, sljit_gpr reg, sljit_sw imm, sljit_uw mask) \
@@ -2517,7 +2534,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op_flags(struct sljit_compiler *co
 
 	sljit_uw mask = get_cc(type & 0xff);
 	if (mask != 0xf) {
-		FAIL_IF(push_load_cc(compiler, type));
+		FAIL_IF(push_load_cc(compiler, type & 0xff));
 	}
 	// TODO(mundaym): fold into cmov helper function?
 	if (have_lscond2()) {
@@ -2566,6 +2583,28 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_cmov(struct sljit_compiler *compil
 	sljit_s32 dst_reg,
 	sljit_s32 src, sljit_sw srcw)
 {
+	CHECK_ERROR();
+	CHECK(check_sljit_emit_cmov(compiler, type, dst_reg, src, srcw));
+
+	sljit_uw mask = get_cc(type & 0xff);
+	if (mask != 0xf) {
+		FAIL_IF(push_load_cc(compiler, type & 0xff));
+	}
+
+	sljit_gpr dst_r = gpr(dst_reg & ~SLJIT_I32_OP);
+	sljit_gpr src_r = FAST_IS_REG(src) ? gpr(src) : tmp0;
+	if (src & SLJIT_IMM) {
+		// TODO(mundaym): fast path with lscond2
+		FAIL_IF(push_load_imm_inst(compiler, src_r, srcw));
+	}
+
+	if (have_lscond1()) {
+		return push_inst(compiler, dst_reg & SLJIT_I32_OP ?
+			locr(dst_r, src_r, mask) :
+			locgr(dst_r, src_r, mask));
+	}
+
+	// TODO(mundaym): implement
 	return SLJIT_ERR_UNSUPPORTED;
 }
 
