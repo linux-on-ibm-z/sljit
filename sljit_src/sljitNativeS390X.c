@@ -184,9 +184,6 @@ static int have_ldisp() { return 1; } // TODO(mundaym): make conditional
 // general-instruction-extension facility
 static int have_genext() { return 1; } // TODO(mundaym): make conditional 
 
-// distinct-operands facility
-static int have_distop() { return 1; } // TODO(mundaym): make conditional
-
 // load/store-on-condition 1 facility
 static int have_lscond1() { return 1; } // TODO(mundaym): make conditional
 
@@ -201,7 +198,6 @@ static int is_s32(sljit_sw d) { return CHECK_SIGNED(d, 32); }
 #undef CHECK_SIGNED
 
 static int is_u12(sljit_sw d) { return 0 <= d && d <= 0x00000fffL; }
-static int is_u16(sljit_sw d) { return 0 <= d && d <= 0x0000ffffL; }
 static int is_u32(sljit_sw d) { return 0 <= d && d <= 0xffffffffL; }
 
 static sljit_uw disp_s20(sljit_s32 d)
@@ -232,17 +228,11 @@ SLJIT_S390X_RR(alr,  0x1e00)
 // AND
 SLJIT_S390X_RR(nr,   0x1400)
 
-// BRANCH AND LINK
-SLJIT_S390X_RR(balr, 0x0500)
-
 // BRANCH AND SAVE
 SLJIT_S390X_RR(basr, 0x0d00)
 
 // BRANCH ON CONDITION
 SLJIT_S390X_RR(bcr,  0x0700) // TODO(mundaym): type for mask?
-
-// BRANCH AND COUNT
-SLJIT_S390X_RR(bctr, 0x0600)
 
 // COMPARE
 SLJIT_S390X_RR(cr,   0x1900)
@@ -259,20 +249,8 @@ SLJIT_S390X_RR(xr,   0x1700)
 // LOAD
 SLJIT_S390X_RR(lr,   0x1800)
 
-// LOAD AND TEST
-SLJIT_S390X_RR(ltr,  0x1200)
-
 // LOAD COMPLEMENT
 SLJIT_S390X_RR(lcr,  0x1300)
-
-// LOAD NEGATIVE
-SLJIT_S390X_RR(lnr,  0x1100)
-
-// LOAD POSITIVE
-SLJIT_S390X_RR(lpr,  0x1000)
-
-// MULTIPLY
-SLJIT_S390X_RR(mr,   0x1c00)
 
 // OR
 SLJIT_S390X_RR(or,   0x1600)
@@ -294,11 +272,9 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src) \
 
 // ADD
 SLJIT_S390X_RRE(agr,   0xb9080000)
-SLJIT_S390X_RRE(agfr,  0xb9180000)
 
 // ADD LOGICAL
 SLJIT_S390X_RRE(algr,  0xb90a0000)
-SLJIT_S390X_RRE(algfr, 0xb91a0000)
 
 // ADD LOGICAL WITH CARRY
 SLJIT_S390X_RRE(alcr,  0xb9980000)
@@ -307,16 +283,11 @@ SLJIT_S390X_RRE(alcgr, 0xb9880000)
 // AND
 SLJIT_S390X_RRE(ngr,   0xb9800000)
 
-// BRANCH ON COUNT
-SLJIT_S390X_RRE(bctgr, 0xb9460000)
-
 // COMPARE
 SLJIT_S390X_RRE(cgr,   0xb9200000)
-SLJIT_S390X_RRE(cgfr,  0xb9300000)
 
 // COMPARE LOGICAL
 SLJIT_S390X_RRE(clgr,  0xb9210000)
-SLJIT_S390X_RRE(clgfr, 0xb9310000)
 
 // DIVIDE LOGICAL
 SLJIT_S390X_RRE(dlr,   0xb9970000)
@@ -324,7 +295,6 @@ SLJIT_S390X_RRE(dlgr,  0xb9870000)
 
 // DIVIDE SINGLE
 SLJIT_S390X_RRE(dsgr,  0xb90d0000)
-SLJIT_S390X_RRE(dsgfr, 0xb91d0000)
 
 // EXCLUSIVE OR
 SLJIT_S390X_RRE(xgr,   0xb9820000)
@@ -333,17 +303,12 @@ SLJIT_S390X_RRE(xgr,   0xb9820000)
 SLJIT_S390X_RRE(lgr,   0xb9040000)
 SLJIT_S390X_RRE(lgfr,  0xb9140000)
 
-// LOAD AND TEST
-SLJIT_S390X_RRE(ltgr,  0xb9020000)
-SLJIT_S390X_RRE(ltgfr, 0xb9120000)
-
 // LOAD BYTE
 SLJIT_S390X_RRE(lbr,   0xb9260000)
 SLJIT_S390X_RRE(lgbr,  0xb9060000)
 
 // LOAD COMPLEMENT
 SLJIT_S390X_RRE(lcgr,  0xb9030000)
-SLJIT_S390X_RRE(lcgfr, 0xb9130000)
 
 // LOAD HALFWORD
 SLJIT_S390X_RRE(lhr,   0xb9270000)
@@ -360,20 +325,7 @@ SLJIT_S390X_RRE(llgcr, 0xb9840000)
 SLJIT_S390X_RRE(llhr,  0xb9950000)
 SLJIT_S390X_RRE(llghr, 0xb9850000)
 
-// LOAD NEGATIVE
-SLJIT_S390X_RRE(lngr,  0xb9010000)
-SLJIT_S390X_RRE(lngfr, 0xb9110000)
-
-// LOAD POSITIVE
-SLJIT_S390X_RRE(lpgr,  0xb9900000)
-SLJIT_S390X_RRE(lpgfr, 0xb9100000)
-
-// LOAD REVERSED
-SLJIT_S390X_RRE(lrvr,  0xb91f0000)
-SLJIT_S390X_RRE(lrvgr, 0xb90f0000)
-
 // MULTIPLY LOGICAL
-SLJIT_S390X_RRE(mlr,   0xb9960000)
 SLJIT_S390X_RRE(mlgr,  0xb9860000)
 
 // MULTIPLY SINGLE
@@ -386,11 +338,9 @@ SLJIT_S390X_RRE(ogr,   0xb9810000)
 
 // SUBTRACT
 SLJIT_S390X_RRE(sgr,   0xb9090000)
-SLJIT_S390X_RRE(sgfr,  0xb9190000)
 
 // SUBTRACT LOGICAL
 SLJIT_S390X_RRE(slgr,  0xb90b0000)
-SLJIT_S390X_RRE(slgfr, 0xb91b0000)
 
 // SUBTRACT LOGICAL WITH BORROW
 SLJIT_S390X_RRE(slbr,  0xb9990000)
@@ -410,18 +360,14 @@ SLJIT_S390X_RIA(ahi,   0xa70a0000, sljit_s16)
 SLJIT_S390X_RIA(aghi,  0xa70b0000, sljit_s16)
 
 // AND IMMEDIATE
-SLJIT_S390X_RIA(nihh,  0xa5040000, sljit_u16)
-SLJIT_S390X_RIA(nihl,  0xa5050000, sljit_u16)
-SLJIT_S390X_RIA(nilh,  0xa5060000, sljit_u16)
-SLJIT_S390X_RIA(nill,  0xa5070000, sljit_u16)
+// SLJIT_S390X_RIA(nihh,  0xa5040000, sljit_u16)
+// SLJIT_S390X_RIA(nihl,  0xa5050000, sljit_u16)
+// SLJIT_S390X_RIA(nilh,  0xa5060000, sljit_u16)
+// SLJIT_S390X_RIA(nill,  0xa5070000, sljit_u16)
 
 // COMPARE HALFWORD IMMEDIATE
 SLJIT_S390X_RIA(chi,   0xa70e0000, sljit_s16)
 SLJIT_S390X_RIA(cghi,  0xa70f0000, sljit_s16)
-
-// INSERT IMMEDIATE
-SLJIT_S390X_RIA(iilh,  0xa5020000, sljit_u16)
-SLJIT_S390X_RIA(iill,  0xa5030000, sljit_u16)
 
 // LOAD HALFWORD IMMEDIATE
 SLJIT_S390X_RIA(lhi,   0xa7080000, sljit_s16)
@@ -438,16 +384,16 @@ SLJIT_S390X_RIA(mhi,   0xa70c0000, sljit_s16)
 SLJIT_S390X_RIA(mghi,  0xa70d0000, sljit_s16)
 
 // OR IMMEDIATE
-SLJIT_S390X_RIA(oihh,  0xa5080000, sljit_u16)
-SLJIT_S390X_RIA(oihl,  0xa5090000, sljit_u16)
+// SLJIT_S390X_RIA(oihh,  0xa5080000, sljit_u16)
+// SLJIT_S390X_RIA(oihl,  0xa5090000, sljit_u16)
 SLJIT_S390X_RIA(oilh,  0xa50a0000, sljit_u16)
-SLJIT_S390X_RIA(oill,  0xa50b0000, sljit_u16)
+// SLJIT_S390X_RIA(oill,  0xa50b0000, sljit_u16)
 
 // TEST UNDER MASK
-SLJIT_S390X_RIA(tmhh,  0xa7020000, sljit_u16)
-SLJIT_S390X_RIA(tmhl,  0xa7030000, sljit_u16)
+// SLJIT_S390X_RIA(tmhh,  0xa7020000, sljit_u16)
+// SLJIT_S390X_RIA(tmhl,  0xa7030000, sljit_u16)
 SLJIT_S390X_RIA(tmlh,  0xa7000000, sljit_u16)
-SLJIT_S390X_RIA(tmll,  0xa7010000, sljit_u16)
+// SLJIT_S390X_RIA(tmll,  0xa7010000, sljit_u16)
 
 #undef SLJIT_S390X_RIA
 
@@ -486,7 +432,7 @@ SLJIT_S390X_RILA(clfi,  0xc20f00000000, sljit_u32)
 SLJIT_S390X_RILA(clgfi, 0xc20e00000000, sljit_u32)
 
 // EXCLUSIVE OR IMMEDIATE
-SLJIT_S390X_RILA(xihf,  0xc00600000000, sljit_u32)
+// SLJIT_S390X_RILA(xihf,  0xc00600000000, sljit_u32)
 SLJIT_S390X_RILA(xilf,  0xc00700000000, sljit_u32)
 
 // INSERT IMMEDIATE
@@ -501,16 +447,16 @@ SLJIT_S390X_RILA(llihf, 0xc00e00000000, sljit_u32)
 SLJIT_S390X_RILA(llilf, 0xc00f00000000, sljit_u32)
 
 // MULTIPLY SINGLE IMMEDIATE
-SLJIT_S390X_RILA(msfi,  0xc20100000000, sljit_s32)
-SLJIT_S390X_RILA(msgfi, 0xc20000000000, sljit_s32)
+// SLJIT_S390X_RILA(msfi,  0xc20100000000, sljit_s32)
+// SLJIT_S390X_RILA(msgfi, 0xc20000000000, sljit_s32)
 
 // OR IMMEDIATE
-SLJIT_S390X_RILA(oihf,  0xc00c00000000, sljit_u32)
+// SLJIT_S390X_RILA(oihf,  0xc00c00000000, sljit_u32)
 SLJIT_S390X_RILA(oilf,  0xc00d00000000, sljit_u32)
 
 // SUBTRACT LOGICAL IMMEDIATE
-SLJIT_S390X_RILA(slfi,  0xc20500000000, sljit_u32)
-SLJIT_S390X_RILA(slgfi, 0xc20400000000, sljit_u32)
+// SLJIT_S390X_RILA(slfi,  0xc20500000000, sljit_u32)
+// SLJIT_S390X_RILA(slgfi, 0xc20400000000, sljit_u32)
 
 #undef SLJIT_S390X_RILA
 
@@ -529,9 +475,6 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr r, sljit_u16 d, sljit_gpr x, sljit_gpr b
 // ADD
 SLJIT_S390X_RXA(a,   0x5a000000)
 
-// ADD HALFWORD
-SLJIT_S390X_RXA(ah,  0x4a000000)
-
 // ADD LOGICAL
 SLJIT_S390X_RXA(al,  0x5e000000)
 
@@ -539,22 +482,19 @@ SLJIT_S390X_RXA(al,  0x5e000000)
 SLJIT_S390X_RXA(n,   0x54000000)
 
 // COMPARE
-SLJIT_S390X_RXA(c,   0x59000000)
+// SLJIT_S390X_RXA(c,   0x59000000)
 
 // COMPARE HALFWORD
-SLJIT_S390X_RXA(ch,  0x49000000)
+// SLJIT_S390X_RXA(ch,  0x49000000)
 
 // COMPARE LOGICAL
-SLJIT_S390X_RXA(cl,  0x55000000)
+// SLJIT_S390X_RXA(cl,  0x55000000)
 
 // DIVIDE
-SLJIT_S390X_RXA(d,   0x5d000000)
+// SLJIT_S390X_RXA(d,   0x5d000000)
 
 // EXCLUSIVE OR
 SLJIT_S390X_RXA(x,   0x57000000)
-
-// INSERT CHARACTER
-SLJIT_S390X_RXA(ic,  0x43000000)
 
 // LOAD
 SLJIT_S390X_RXA(l,   0x58000000)
@@ -566,10 +506,7 @@ SLJIT_S390X_RXA(la,  0x41000000)
 SLJIT_S390X_RXA(lh,  0x48000000)
 
 // MULTIPLY
-SLJIT_S390X_RXA(m,   0x5c000000)
-
-// MULTIPLY HALFWORD
-SLJIT_S390X_RXA(mh,  0x4c000000)
+// SLJIT_S390X_RXA(m,   0x5c000000)
 
 // MULTIPLY SINGLE
 SLJIT_S390X_RXA(ms,  0x71000000)
@@ -588,9 +525,6 @@ SLJIT_S390X_RXA(sth, 0x40000000)
 
 // SUBTRACT
 SLJIT_S390X_RXA(s,   0x5b000000)
-
-// SUBTRACT HALFWORD
-SLJIT_S390X_RXA(sh,  0x4b000000)
 
 // SUBTRACT LOGICAL
 SLJIT_S390X_RXA(sl,  0x5f000000)
@@ -612,16 +546,10 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr r, sljit_s32 d, sljit_gpr x, sljit_gpr b
 // ADD
 SLJIT_S390X_RXYA(ay,    0xe3000000005a, have_ldisp())
 SLJIT_S390X_RXYA(ag,    0xe30000000008, 1)
-SLJIT_S390X_RXYA(agf,   0xe30000000018, 1)
-
-// ADD HALFWORD
-SLJIT_S390X_RXYA(ahy,   0xe3000000007a, have_ldisp())
-SLJIT_S390X_RXYA(agh,   0xe30000000038, 0) // TODO(mundaym): misc2?
 
 // ADD LOGICAL
 SLJIT_S390X_RXYA(aly,   0xe3000000005e, have_ldisp())
 SLJIT_S390X_RXYA(alg,   0xe3000000000a, 1)
-SLJIT_S390X_RXYA(algf,  0xe3000000001a, 1)
 
 // ADD LOGICAL WITH CARRY
 SLJIT_S390X_RXYA(alc,   0xe30000000098, 1)
@@ -632,33 +560,28 @@ SLJIT_S390X_RXYA(ny,    0xe30000000054, have_ldisp())
 SLJIT_S390X_RXYA(ng,    0xe30000000080, 1)
 
 // COMPARE
-SLJIT_S390X_RXYA(cy,    0xe30000000059, have_ldisp())
-SLJIT_S390X_RXYA(cg,    0xe30000000020, 1)
-SLJIT_S390X_RXYA(cgf,   0xe30000000030, 1)
+// SLJIT_S390X_RXYA(cy,    0xe30000000059, have_ldisp())
+// SLJIT_S390X_RXYA(cg,    0xe30000000020, 1)
 
 // COMPARE HALFWORD
-SLJIT_S390X_RXYA(chy,   0xe30000000079, have_ldisp())
-SLJIT_S390X_RXYA(cgh,   0xe30000000034, 0) // TODO(mundaym): general1?
+// SLJIT_S390X_RXYA(chy,   0xe30000000079, have_ldisp())
+// SLJIT_S390X_RXYA(cgh,   0xe30000000034, 0) // TODO(mundaym): general1?
 
 // COMPARE LOGICAL
-SLJIT_S390X_RXYA(cly,   0xe30000000055, have_ldisp())
-SLJIT_S390X_RXYA(clg,   0xe30000000021, 1)
-SLJIT_S390X_RXYA(clgf,  0xe30000000031, 1)
+// SLJIT_S390X_RXYA(cly,   0xe30000000055, have_ldisp())
+// SLJIT_S390X_RXYA(clg,   0xe30000000021, 1)
 
 // DIVIDE LOGICAL
-SLJIT_S390X_RXYA(dl,    0xe30000000097, 1)
-SLJIT_S390X_RXYA(dlg,   0xe30000000087, 1)
+// SLJIT_S390X_RXYA(dl,    0xe30000000097, 1)
+// SLJIT_S390X_RXYA(dlg,   0xe30000000087, 1)
 
 // DIVIDE SINGLE
-SLJIT_S390X_RXYA(dsg,   0xe3000000000d, 1)
-SLJIT_S390X_RXYA(dsgf,  0xe3000000001d, 1)
+// SLJIT_S390X_RXYA(dsg,   0xe3000000000d, 1)
+// SLJIT_S390X_RXYA(dsgf,  0xe3000000001d, 1)
 
 // EXCLUSIVE OR
 SLJIT_S390X_RXYA(xy,    0xe30000000057, have_ldisp())
 SLJIT_S390X_RXYA(xg,    0xe30000000082, 1)
-
-// INSERT CHARACTER
-SLJIT_S390X_RXYA(icy,   0xe30000000073, have_ldisp())
 
 // LOAD
 SLJIT_S390X_RXYA(ly,    0xe30000000058, have_ldisp())
@@ -666,12 +589,11 @@ SLJIT_S390X_RXYA(lg,    0xe30000000004, 1)
 SLJIT_S390X_RXYA(lgf,   0xe30000000014, 1)
 
 // LOAD ADDRESS
-SLJIT_S390X_RXYA(lay,   0xe30000000071, have_ldisp())
+// SLJIT_S390X_RXYA(lay,   0xe30000000071, have_ldisp())
 
 // LOAD AND TEST
-SLJIT_S390X_RXYA(lt,    0xe30000000012, have_eimm())
-SLJIT_S390X_RXYA(ltg,   0xe30000000002, have_eimm())
-SLJIT_S390X_RXYA(ltgf,  0xe30000000032, 0) // TODO(mundaym): general1?
+// SLJIT_S390X_RXYA(lt,    0xe30000000012, have_eimm())
+// SLJIT_S390X_RXYA(ltg,   0xe30000000002, have_eimm())
 
 // LOAD BYTE
 SLJIT_S390X_RXYA(lb,    0xe30000000076, have_ldisp())
@@ -692,29 +614,19 @@ SLJIT_S390X_RXYA(llgc,  0xe30000000090, 1)
 SLJIT_S390X_RXYA(llh,   0xe30000000095, have_eimm())
 SLJIT_S390X_RXYA(llgh,  0xe30000000091, 1)
 
-// LOAD REVERSED
-SLJIT_S390X_RXYA(lrvh,  0xe3000000001f, 1)
-SLJIT_S390X_RXYA(lrv,   0xe3000000001e, 1)
-SLJIT_S390X_RXYA(lrvg,  0xe3000000000f, 1)
-
 // MULTIPLY
-SLJIT_S390X_RXYA(mfy,   0xe3000000005c, 0) // TODO(mundaym): general1?
-SLJIT_S390X_RXYA(mg,    0xe30000000084, 0) // TODO(mundaym): misc2?
-
-// MULTIPLY HALFWORD
-SLJIT_S390X_RXYA(mhy,   0xe3000000007c, 0) // TODO(mundaym): general1?
-SLJIT_S390X_RXYA(mgh,   0xe3000000003c, 0) // TODO(mundaym): misc2?
+// SLJIT_S390X_RXYA(mg,    0xe30000000084, 0) // TODO(mundaym): misc2?
 
 // MULTIPLY LOGICAL
-SLJIT_S390X_RXYA(ml,    0xe30000000096, 1)
-SLJIT_S390X_RXYA(mlg,   0xe30000000086, 1)
+// SLJIT_S390X_RXYA(ml,    0xe30000000096, 1)
+// SLJIT_S390X_RXYA(mlg,   0xe30000000086, 1)
 
 // MULTIPLY SINGLE
-SLJIT_S390X_RXYA(msc,   0xe30000000053, 0) // TODO(mundaym): misc2?
+// SLJIT_S390X_RXYA(msc,   0xe30000000053, 0) // TODO(mundaym): misc2?
 SLJIT_S390X_RXYA(msy,   0xe30000000051, have_ldisp())
 SLJIT_S390X_RXYA(msg,   0xe3000000000c, 1)
-SLJIT_S390X_RXYA(msgc,  0xe30000000083, 0) // TODO(mundaym): misc2?
-SLJIT_S390X_RXYA(msgf,  0xe3000000001c, 0) // TODO(mundaym): misc2?
+// SLJIT_S390X_RXYA(msgc,  0xe30000000083, 0) // TODO(mundaym): misc2?
+// SLJIT_S390X_RXYA(msgf,  0xe3000000001c, 0) // TODO(mundaym): misc2?
 
 // OR
 SLJIT_S390X_RXYA(oy,    0xe30000000056, have_ldisp())
@@ -730,24 +642,13 @@ SLJIT_S390X_RXYA(stcy,  0xe30000000072, have_ldisp())
 // STORE HALFWORD
 SLJIT_S390X_RXYA(sthy,  0xe30000000070, have_ldisp())
 
-// STORE REVERSED
-SLJIT_S390X_RXYA(strvh, 0xe3000000003f, 1)
-SLJIT_S390X_RXYA(strv,  0xe3000000003e, 1)
-SLJIT_S390X_RXYA(strvg, 0xe3000000002f, 1)
-
 // SUBTRACT
 SLJIT_S390X_RXYA(sy,    0xe3000000005b, have_ldisp())
 SLJIT_S390X_RXYA(sg,    0xe30000000009, 1)
-SLJIT_S390X_RXYA(sgf,   0xe30000000019, 1)
-
-// SUBTRACT HALFWORD
-SLJIT_S390X_RXYA(shy,   0xe3000000007b, have_ldisp())
-SLJIT_S390X_RXYA(sgh,   0xe30000000039, 0) // TODO(mundaym): misc2?
 
 // SUBTRACT LOGICAL
 SLJIT_S390X_RXYA(sly,   0xe3000000005f, have_ldisp())
 SLJIT_S390X_RXYA(slg,   0xe3000000000b, 1)
-SLJIT_S390X_RXYA(slgf,  0xe3000000001b, 1)
 
 // SUBTRACT LOGICAL WITH BORROW
 SLJIT_S390X_RXYA(slb,   0xe30000000099, 1)
@@ -819,23 +720,23 @@ SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_u8 start, slji
 }
 
 // ROTATE THEN AND SELECTED BITS
-SLJIT_S390X_RIEF(rnsbg,  0xec0000000054)
+// SLJIT_S390X_RIEF(rnsbg,  0xec0000000054)
 
 // ROTATE THEN EXCLUSIVE OR SELECTED BITS
-SLJIT_S390X_RIEF(rxsbg,  0xec0000000057)
+// SLJIT_S390X_RIEF(rxsbg,  0xec0000000057)
 
 // ROTATE THEN OR SELECTED BITS
 SLJIT_S390X_RIEF(rosbg,  0xec0000000056)
 
 // ROTATE THEN INSERT SELECTED BITS
-SLJIT_S390X_RIEF(risbg,  0xec0000000055)
-SLJIT_S390X_RIEF(risbgn, 0xec0000000059)
+// SLJIT_S390X_RIEF(risbg,  0xec0000000055)
+// SLJIT_S390X_RIEF(risbgn, 0xec0000000059)
 
 // ROTATE THEN INSERT SELECTED BITS HIGH
 SLJIT_S390X_RIEF(risbhg, 0xec000000005d)
 
 // ROTATE THEN INSERT SELECTED BITS LOW
-SLJIT_S390X_RIEF(risblg, 0xec0000000051)
+// SLJIT_S390X_RIEF(risblg, 0xec0000000051)
 
 #undef SLJIT_S390X_RIEF
 
@@ -1396,8 +1297,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 	sljit_s32 options, sljit_s32 arg_types, sljit_s32 scratches, sljit_s32 saveds,
 	sljit_s32 fscratches, sljit_s32 fsaveds, sljit_s32 local_size)
 {
-	sljit_s32 args, i, tmp, offs, prev, saved_regs_size;
-
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_enter(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size));
 	set_emit_enter(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size);
@@ -1418,7 +1317,7 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_enter(struct sljit_compiler *compi
 		}
 	}
 
-	args = get_arg_count(arg_types);
+	sljit_s32 args = get_arg_count(arg_types);
 	if (args >= 1)
 		FAIL_IF(push_inst(compiler, lgr(gpr(SLJIT_S0), gpr(SLJIT_R0))));
 	if (args >= 2)
@@ -1434,8 +1333,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_set_context(struct sljit_compiler *comp
 	sljit_s32 options, sljit_s32 arg_types, sljit_s32 scratches, sljit_s32 saveds,
 	sljit_s32 fscratches, sljit_s32 fsaveds, sljit_s32 local_size)
 {
-	sljit_s32 saved_regs_size;
-
 	CHECK_ERROR();
 	CHECK(check_sljit_set_context(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size));
 	set_set_context(compiler, options, arg_types, scratches, saveds, fscratches, fsaveds, local_size);
@@ -1447,9 +1344,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_set_context(struct sljit_compiler *comp
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_return(struct sljit_compiler *compiler, sljit_s32 op, sljit_s32 src, sljit_sw srcw)
 {
-	sljit_s32 local_size;
-	sljit_s32 i, tmp, offs, prev, saved_regs_size;
-
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_return(compiler, op, src, srcw));
 
@@ -1556,9 +1450,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op1(struct sljit_compiler *compile
         sljit_s32 dst, sljit_sw dstw,
         sljit_s32 src, sljit_sw srcw)
 {
-	sljit_s32 flags, mem_flags;
-	sljit_s32 op_flags = GET_ALL_FLAGS(op);
-
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_op1(compiler, op, dst, dstw, src, srcw));
 	ADJUST_LOCAL_OFFSET(dst, dstw);
@@ -2476,8 +2367,6 @@ SLJIT_API_FUNC_ATTRIBUTE struct sljit_jump* sljit_emit_call(struct sljit_compile
 
 SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_ijump(struct sljit_compiler *compiler, sljit_s32 type, sljit_s32 src, sljit_sw srcw)
 {
-	struct sljit_jump *jump;
-
 	CHECK_ERROR();
 	CHECK(check_sljit_emit_ijump(compiler, type, src, srcw));
 	ADJUST_LOCAL_OFFSET(src, srcw);
