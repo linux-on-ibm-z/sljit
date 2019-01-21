@@ -872,7 +872,7 @@ SLJIT_S390X_RRFA(msgrkc, 0xb9ed0000, have_misc2())
 #define SLJIT_S390X_RRFC(name, pattern) \
 SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src, sljit_uw mask) \
 { \
-	SLJIT_ASSERT(have_lscond2()); \
+	SLJIT_ASSERT(have_lscond1()); \
 	sljit_ins r1 = (sljit_ins)(dst&0xf) << 4; \
 	sljit_ins r2 = (sljit_ins)(src&0xf); \
 	sljit_ins m3 = (sljit_ins)(mask&0xf) << 12; \
