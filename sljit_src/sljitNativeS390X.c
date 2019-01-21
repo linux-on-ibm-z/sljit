@@ -24,6 +24,15 @@
  * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <sys/auxv.h>
+
+#ifdef __ARCH__
+#define ENABLE_STATIC_FACILITY_DETECTION 1
+#else
+#define ENABLE_STATIC_FACILITY_DETECTION 0
+#endif
+#define ENABLE_DYNAMIC_FACILITY_DETECTION 1
+
 SLJIT_API_FUNC_ATTRIBUTE const char* sljit_get_platform_name(void)
 {
 	return "s390x" SLJIT_CPUINFO;
@@ -175,20 +184,121 @@ static sljit_uw get_cc(sljit_s32 type) {
 	SLJIT_UNREACHABLE();
 }
 
-// extended-immediate facility
-static int have_eimm() { return 1; }  // TODO(mundaym): make conditional
+// Facility to bit index mappings.
+// Note that some facilities share the same bit index.
+typedef sljit_uw facility_bit;
+#define STORE_FACILITY_LIST_EXTENDED_FACILITY 7
+#define FAST_LONG_DISPLACEMENT_FACILITY 19
+#define EXTENDED_IMMEDIATE_FACILITY 21
+#define GENERAL_INSTRUCTION_EXTENSION_FACILITY 34
+#define DISTINCT_OPERAND_FACILITY 45
+#define HIGH_WORD_FACILITY 45
+#define POPULATION_COUNT_FACILITY 45
+#define LOAD_STORE_ON_CONDITION_1_FACILITY 45
+#define MISCELLANEOUS_INSTRUCTION_EXTENSIONS_1_FACILITY 49
+#define LOAD_STORE_ON_CONDITION_2_FACILITY 53
+#define MISCELLANEOUS_INSTRUCTION_EXTENSIONS_2_FACILITY 58
+#define VECTOR_FACILITY 129
+#define VECTOR_ENHANCEMENTS_1_FACILITY 135
 
-// long-displacement facility
-static int have_ldisp() { return 1; } // TODO(mundaym): make conditional
+// Report whether a facility is known to be present due to the compiler
+// settings.
+static SLJIT_INLINE int have_facility_static(facility_bit x)
+{
+// It is common for the architecture targeted by the C compiler to have
+// significantly more instructions than are present in the base ISA.
+// For example, Ubuntu 18.04 ships with GCC preconfigured to target zEC12 and
+// above.
+#if ENABLE_STATIC_FACILITY_DETECTION != 0
+	switch (x) {
+	case FAST_LONG_DISPLACEMENT_FACILITY:
+		return (__ARCH__ >=  6 /* z990 */);
+	case EXTENDED_IMMEDIATE_FACILITY:
+	case STORE_FACILITY_LIST_EXTENDED_FACILITY:
+		return (__ARCH__ >=  7 /* z9-109 */);
+	case GENERAL_INSTRUCTION_EXTENSION_FACILITY:
+		return (__ARCH__ >=  8 /* z10 */);
+	case DISTINCT_OPERAND_FACILITY:
+		return (__ARCH__ >=  9 /* z196 */);
+	case MISCELLANEOUS_INSTRUCTION_EXTENSIONS_1_FACILITY:
+		return (__ARCH__ >= 10 /* zEC12 */);
+	case LOAD_STORE_ON_CONDITION_2_FACILITY:
+	case VECTOR_FACILITY:
+		return (__ARCH__ >= 11 /* z13 */);
+	case MISCELLANEOUS_INSTRUCTION_EXTENSIONS_2_FACILITY:
+	case VECTOR_ENHANCEMENTS_1_FACILITY:
+		return (__ARCH__ >= 12 /* z14 */);
+	}
+#endif
+	return 0;
+}
 
-// general-instruction-extension facility
-static int have_genext() { return 1; } // TODO(mundaym): make conditional 
+static SLJIT_INLINE long get_hwcap()
+{
+	static long hwcap = 0;
+	if (SLJIT_UNLIKELY(hwcap == 0)) {
+		hwcap = getauxval(AT_HWCAP);
+		SLJIT_ASSERT(hwcap != 0);
+	}
+	return hwcap;
+}
 
-// load/store-on-condition 1 facility
-static int have_lscond1() { return 1; } // TODO(mundaym): make conditional
+static SLJIT_INLINE int have_stfle()
+{
+	if (have_facility_static(STORE_FACILITY_LIST_EXTENDED_FACILITY)) {
+		return 1;
+	}
+	return SLJIT_LIKELY((HWCAP_S390_STFLE & get_hwcap()) != 0);
+}
 
-// load/store-on-condition 2 facility
-static int have_lscond2() { return 1; } // TODO(mundaym): make conditional
+static int have_facility_dynamic(facility_bit x)
+{
+#if ENABLE_DYNAMIC_FACILITY_DETECTION
+	static struct {
+		sljit_uw bits[4];
+	} cpu_features;
+	size_t size = sizeof(cpu_features);
+	SLJIT_ASSERT(sizeof(cpu_features) >= ((x+7)/8));
+	if (SLJIT_UNLIKELY(!have_stfle())) {
+		return 0;
+	}
+	if (SLJIT_UNLIKELY(cpu_features.bits[0] == 0)) {
+		__asm__ __volatile__ (
+			"lgr   %%r0, %0;"
+			"stfle 0(%1);"
+			/* outputs  */:
+			/* inputs   */: "d" ((size / 8) - 1), "a" (&cpu_features)
+			/* clobbers */: "r0", "cc", "memory"
+		);
+		SLJIT_ASSERT(cpu_features.bits[0] != 0);
+	}
+	const sljit_uw word_index = x / 64;
+	const sljit_uw bit_index = ((1UL << 63) >> (x & 63));
+	return (cpu_features.bits[word_index] & bit_index) != 0;
+#else
+	return 0;
+#endif
+}
+
+#define HAVE_FACILITY(name, bit) \
+static SLJIT_INLINE int name() \
+{ \
+	static int have = -1; \
+	if (have_facility_static(bit)) { \
+		return 1; \
+	} \
+	if (SLJIT_UNLIKELY(have < 0)) { \
+		have = have_facility_dynamic(bit) ? 1 : 0; \
+	} \
+	return SLJIT_LIKELY(have); \
+}
+HAVE_FACILITY(have_eimm,    EXTENDED_IMMEDIATE_FACILITY)
+HAVE_FACILITY(have_ldisp,   FAST_LONG_DISPLACEMENT_FACILITY)
+HAVE_FACILITY(have_genext,  GENERAL_INSTRUCTION_EXTENSION_FACILITY)
+HAVE_FACILITY(have_lscond1, LOAD_STORE_ON_CONDITION_1_FACILITY)
+HAVE_FACILITY(have_lscond2, LOAD_STORE_ON_CONDITION_2_FACILITY)
+HAVE_FACILITY(have_misc2,   MISCELLANEOUS_INSTRUCTION_EXTENSIONS_2_FACILITY)
+#undef HAVE_FACILITY
 
 #define CHECK_SIGNED(v, bitlen) \
 	((v) == (((v) << (sizeof(v)*8 - bitlen)) >> (sizeof(v)*8 - bitlen)))
