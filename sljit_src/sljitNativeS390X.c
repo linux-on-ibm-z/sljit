@@ -1310,8 +1310,9 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_has_cpu_feature(sljit_s32 feature_type)
 	switch (feature_type) {
 	case SLJIT_HAS_CLZ:
 		return have_eimm() ? 1 : 0; // FLOGR instruction
-	case SLJIT_HAS_FPU:
 	case SLJIT_HAS_CMOV:
+		return have_lscond1() ? 1 : 0;
+	case SLJIT_HAS_FPU:
 		return 0;
 	}
 	return 0;
