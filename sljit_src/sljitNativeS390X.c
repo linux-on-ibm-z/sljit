@@ -738,6 +738,7 @@ SLJIT_S390X_RXYA(msg,   0xe3000000000c, 1)
 // SLJIT_S390X_RXYA(msgc,  0xe30000000083, 0) // TODO(mundaym): misc2?
 // SLJIT_S390X_RXYA(msgf,  0xe3000000001c, 0) // TODO(mundaym): misc2?
 
+
 // OR
 SLJIT_S390X_RXYA(oy,    0xe30000000056, have_ldisp())
 SLJIT_S390X_RXYA(og,    0xe30000000081, 1)
@@ -849,6 +850,23 @@ SLJIT_S390X_RIEF(risbhg, 0xec000000005d)
 // SLJIT_S390X_RIEF(risblg, 0xec0000000051)
 
 #undef SLJIT_S390X_RIEF
+
+// RRF-a instructions
+#define SLJIT_S390X_RRFA(name, pattern, cond) \
+SLJIT_S390X_INSTRUCTION(name, sljit_gpr dst, sljit_gpr src1, sljit_gpr src2) \
+{ \
+	SLJIT_ASSERT(cond); \
+	sljit_ins r1 = (sljit_ins)(dst&0xf) << 4; \
+	sljit_ins r2 = (sljit_ins)(src1&0xf); \
+	sljit_ins r3 = (sljit_ins)(src2&0xf) << 12; \
+	return pattern | r3 | r1 | r2; \
+}
+
+// MULTIPLY
+SLJIT_S390X_RRFA(msrkc,  0xb9fd0000, have_misc2())
+SLJIT_S390X_RRFA(msgrkc, 0xb9ed0000, have_misc2())
+
+#undef SLJIT_S390X_RRFA
 
 // RRF-c instructions (require load/store-on-condition 1 facility)
 #define SLJIT_S390X_RRFC(name, pattern) \
@@ -1997,7 +2015,6 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 		// multiply instructions do not generally set flags so we need to manually
 		// detect overflow conditions
 		// TODO(mundaym): 64-bit overflow
-		// TODO(mundaym): z14 MSRKC and MSGKRC instructions would be much better for this
 		SLJIT_ASSERT(GET_FLAG_TYPE(op) == SLJIT_MUL_OVERFLOW ||
 		             GET_FLAG_TYPE(op) == SLJIT_MUL_NOT_OVERFLOW);
 		sljit_gpr src2_r = FAST_IS_REG(src2) ? gpr(src2 & REG_MASK) : tmp1;
@@ -2009,7 +2026,11 @@ SLJIT_API_FUNC_ATTRIBUTE sljit_s32 sljit_emit_op2(struct sljit_compiler *compile
 			// load src2 into register
 			FAIL_IF(load_word(compiler, src2_r, src2, src2w, tmp1, op & SLJIT_I32_OP));
 		}
-		if (op & SLJIT_I32_OP) {
+		if (have_misc2()) {
+			FAIL_IF(push_inst(compiler, op & SLJIT_I32_OP ?
+			        msrkc(dst_r, src1_r, src2_r) :
+				msgrkc(dst_r, src1_r, src2_r)));
+		} else if (op & SLJIT_I32_OP) {
 			op &= ~VARIABLE_FLAG_MASK;
 			FAIL_IF(push_inst(compiler, lgfr(tmp0, src1_r)));
 			FAIL_IF(push_inst(compiler, msgfr(tmp0, src2_r)));
