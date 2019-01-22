@@ -443,11 +443,6 @@ struct sljit_compiler {
 	sljit_sw cache_argw;
 #endif
 
-#if (defined SLJIT_CONFIG_S390X && SLJIT_CONFIG_S390X)
-	/* Need to allocate register save area to make calls. */
-	sljit_s32 have_save_area;
-#endif
-
 #if (defined SLJIT_VERBOSE && SLJIT_VERBOSE)
 	FILE* verbose;
 #endif
